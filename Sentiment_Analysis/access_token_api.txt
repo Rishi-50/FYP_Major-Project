@@ -1,0 +1,13 @@
+--> TWITTER APIS
+
+
+Access Token = 1762358163599503360-REhaHA2FL4wOnLuk6iYQJusSVYZUaz
+
+Access Token Secret = 3ByPB102xLx6e4mli8L69LFTlNDsaOisqipCAmfEg4gcx
+
+
+
+***** API Key = iVXfx3jQszVJ6ug2DXQDuTUMk *****
+
+
+API Key Secret = NnuloHSZXdYAK5Gxrz9M7aIbVyNfdkZt6Z1tOBNL92juKeBDW4
