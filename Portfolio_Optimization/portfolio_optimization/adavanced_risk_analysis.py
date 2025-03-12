@@ -130,72 +130,72 @@ def detect_anomalies(returns):
     return anomalies
 
 
-def plot_pca_results(pca_data, explained_variance):
-    """
-    Creates an interactive PCA scatter plot.
+# def plot_pca_results(pca_data, explained_variance):
+#     """
+#     Creates an interactive PCA scatter plot.
 
-    Parameters:
-    - pca_data: DataFrame with 'PC1', 'PC2', and optional labels for tooltips.
-    - explained_variance: Percentage of variance explained by the components.
+#     Parameters:
+#     - pca_data: DataFrame with 'PC1', 'PC2', and optional labels for tooltips.
+#     - explained_variance: Percentage of variance explained by the components.
 
-    Returns:
-    - fig: Plotly interactive figure.
-    """
-    # Ensure 'Label' column exists for tooltips (if not, create a default)
-    if 'Label' not in pca_data.columns:
-        pca_data['Label'] = pca_data.index
+#     Returns:
+#     - fig: Plotly interactive figure.
+#     """
+#     # Ensure 'Label' column exists for tooltips (if not, create a default)
+#     if 'Label' not in pca_data.columns:
+#         pca_data['Label'] = pca_data.index
 
-    # Create a scatter plot
-    fig = go.Figure()
+#     # Create a scatter plot
+#     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        x=pca_data['PC1'],
-        y=pca_data['PC2'],
-        mode='markers',
-        marker=dict(
-            size=10,
-            color=pca_data['PC1'],  # Color by PC1 for better visual effect
-            colorscale='Viridis',
-            showscale=True,
-            colorbar=dict(title="PC1 Value")
-        ),
-        text=pca_data['Label'],  # Add labels to tooltips
-        hovertemplate=(
-            "<b>Label:</b> %{text}<br>"
-            "<b>PC1:</b> %{x:.2f}<br>"
-            "<b>PC2:</b> %{y:.2f}<br>"
-            "<extra></extra>"
-        ),
-        name='PCA Components'
-    ))
+#     fig.add_trace(go.Scatter(
+#         x=pca_data['PC1'],
+#         y=pca_data['PC2'],
+#         mode='markers',
+#         marker=dict(
+#             size=10,
+#             color=pca_data['PC1'],  # Color by PC1 for better visual effect
+#             colorscale='Viridis',
+#             showscale=True,
+#             colorbar=dict(title="PC1 Value")
+#         ),
+#         text=pca_data['Label'],  # Add labels to tooltips
+#         hovertemplate=(
+#             "<b>Label:</b> %{text}<br>"
+#             "<b>PC1:</b> %{x:.2f}<br>"
+#             "<b>PC2:</b> %{y:.2f}<br>"
+#             "<extra></extra>"
+#         ),
+#         name='PCA Components'
+#     ))
 
-    # Add explained variance to the title
-    fig.update_layout(
-        title=f"PCA Results<br> Explained Variance: PC1: {explained_variance[0]*100:.2f}%, PC2: {explained_variance[1]*100:.2f}%",
-        xaxis=dict(title='Principal Component 1'),
-        yaxis=dict(title='Principal Component 2'),
-        template='plotly_white',
-        hovermode='closest',
-    )
+#     # Add explained variance to the title
+#     fig.update_layout(
+#         title=f"PCA Results<br> Explained Variance: PC1: {explained_variance[0]*100:.2f}%, PC2: {explained_variance[1]*100:.2f}%",
+#         xaxis=dict(title='Principal Component 1'),
+#         yaxis=dict(title='Principal Component 2'),
+#         template='plotly_white',
+#         hovermode='closest',
+#     )
 
-    # Add interactivity: Show a reference line at the origin
-    fig.add_trace(go.Scatter(
-        x=[0, 0],
-        y=[pca_data['PC2'].min(), pca_data['PC2'].max()],
-        mode='lines',
-        line=dict(dash='dash', color='gray'),
-        showlegend=False
-    ))
+#     # Add interactivity: Show a reference line at the origin
+#     fig.add_trace(go.Scatter(
+#         x=[0, 0],
+#         y=[pca_data['PC2'].min(), pca_data['PC2'].max()],
+#         mode='lines',
+#         line=dict(dash='dash', color='gray'),
+#         showlegend=False
+#     ))
 
-    fig.add_trace(go.Scatter(
-        x=[pca_data['PC1'].min(), pca_data['PC1'].max()],
-        y=[0, 0],
-        mode='lines',
-        line=dict(dash='dash', color='gray'),
-        showlegend=False
-    ))
+#     fig.add_trace(go.Scatter(
+#         x=[pca_data['PC1'].min(), pca_data['PC1'].max()],
+#         y=[0, 0],
+#         mode='lines',
+#         line=dict(dash='dash', color='gray'),
+#         showlegend=False
+#     ))
 
-    return fig
+#     return fig
 
 
 
