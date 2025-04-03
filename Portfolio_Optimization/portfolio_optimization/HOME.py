@@ -23,8 +23,7 @@ def main():
         
         page = st.radio(
             "Go to:",
-            # ("Home", "Portfolio Optimization", "PCA and Forecasting", "User-Defined Portfolio")
-            ("Home", "Portfolio Optimization")
+            ("Home", "Portfolio Optimization", "Sentiment-Based Optimization")
         )
 
         st.header("📅 Date Range Selector")
@@ -52,10 +51,8 @@ def main():
         st.markdown("### Welcome to the Home Page!")
     elif page == "Portfolio Optimization":
         st.markdown("### Portfolio Optimization Section")
-    elif page == "PCA and Forecasting":
-        st.markdown("### PCA and Forecasting Section")
-    elif page == "User-Defined Portfolio":
-        st.markdown("### User-Defined Portfolio Section")
+    elif page == "Sentiment-Based Optimization":
+        st.markdown("### Sentiment-Based Portfolio Optimization Section")
 
     # Collapsible sections for extra details
     with st.expander("📈 About This Application"):
@@ -65,10 +62,8 @@ def main():
             into portfolio management. Here's what you can do:
             - **Portfolio Optimization**: Use Monte Carlo simulations and mean-variance optimization to find the 
               best portfolio allocation for your investments.
-            - **PCA and Forecasting**: Apply Principal Component Analysis (PCA) to reduce dimensionality and forecast 
-              future returns or volatility with ARCH/GARCH models.
-            - **User-Defined Portfolios**: Input your custom portfolio and calculate weights, risk metrics like VaR/CVaR, 
-              and cluster analysis.
+            - **Sentiment-Based Optimization**: Combine market sentiment analysis with traditional financial metrics 
+              to make more informed investment decisions.
             - **Risk Management**: Analyze portfolio risks using efficient frontiers, Sharpe ratios, and clustering techniques.
             """
         )
@@ -77,9 +72,9 @@ def main():
         st.markdown(
             """
             This tool is ideal for:
-            - **Individual Investors**: Optimize personal portfolios based on historical data and risk tolerance.
+            - **Individual Investors**: Optimize personal portfolios based on historical data and market sentiment.
             - **Financial Analysts**: Perform in-depth risk and return analysis using cutting-edge financial models.
-            - **Students and Educators**: Learn about portfolio management, PCA, and advanced forecasting techniques.
+            - **Students and Educators**: Learn about portfolio management and sentiment analysis in finance.
             - **Portfolio Managers**: Analyze large datasets to make data-driven investment decisions.
             """
         )
