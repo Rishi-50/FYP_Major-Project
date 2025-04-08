@@ -1,5 +1,3 @@
-# TODO: UNCOMMENT THE FULL CODE TO RUN
-
 import streamlit as st
 import numpy as np
 import pandas as pd
