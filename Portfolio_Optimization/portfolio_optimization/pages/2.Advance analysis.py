@@ -26,57 +26,58 @@ def main():
     returns = calculate_returns(data)
 
      # Tabs for different functionalities
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "PCA Analysis", "Risk Parity", "Volatility and Return Prediction", "Anomaly Detection"
+    # tab1,
+    tab2, tab3, tab4 = st.tabs([
+        "Risk Parity", "Volatility and Return Prediction", "Anomaly Detection"
     ])
 
 
 
-    with tab1:
-        st.subheader("PCA Analysis")
-        pca_data, explained_variance = apply_pca(returns)
-        st.dataframe(pca_data)
-        pca_fig = plot_pca_results(pca_data, explained_variance)
-        st.plotly_chart(pca_fig)
+    # with tab1:
+    #     st.subheader("PCA Analysis")
+    #     pca_data, explained_variance = apply_pca(returns)
+    #     st.dataframe(pca_data)
+    #     pca_fig = plot_pca_results(pca_data, explained_variance)
+    #     st.plotly_chart(pca_fig)
 
-        st.markdown("""
-        ### What is PCA?
-        Principal Component Analysis (PCA) reduces the dimensionality of data while retaining most of its variance. 
-        It transforms correlated variables into a smaller number of uncorrelated variables called principal components.
+    #     st.markdown("""
+    #     ### What is PCA?
+    #     Principal Component Analysis (PCA) reduces the dimensionality of data while retaining most of its variance. 
+    #     It transforms correlated variables into a smaller number of uncorrelated variables called principal components.
 
-        ### How is PCA Helpful?
-        - **Understanding Drivers of Variance**: PCA identifies the main factors driving portfolio returns.
-        - **Risk Management**: By focusing on major components, you can better understand where risks are concentrated.
-        - **Data Simplification**: Reduces the complexity of large datasets, making analysis more manageable.
+    #     ### How is PCA Helpful?
+    #     - **Understanding Drivers of Variance**: PCA identifies the main factors driving portfolio returns.
+    #     - **Risk Management**: By focusing on major components, you can better understand where risks are concentrated.
+    #     - **Data Simplification**: Reduces the complexity of large datasets, making analysis more manageable.
 
-        ### Interpretation:
-        - PC1 explains the majority of variance in the portfolio, showing where most of the movement in asset prices originates.
-        - Lower components like PC2 and PC3 explain residual variance, which may relate to secondary factors or noise.
+    #     ### Interpretation:
+    #     - PC1 explains the majority of variance in the portfolio, showing where most of the movement in asset prices originates.
+    #     - Lower components like PC2 and PC3 explain residual variance, which may relate to secondary factors or noise.
 
-        ### **Example Use Case**:
-        1. **Financial Data Analysis**:
-        - In financial markets, PCA can be applied to analyze correlations between assets.
-        - For example, returns of multiple stocks can be reduced to a few principal components, where PC1 may capture the overall market movement, and subsequent components may reflect sector-specific trends.
+    #     ### **Example Use Case**:
+    #     1. **Financial Data Analysis**:
+    #     - In financial markets, PCA can be applied to analyze correlations between assets.
+    #     - For example, returns of multiple stocks can be reduced to a few principal components, where PC1 may capture the overall market movement, and subsequent components may reflect sector-specific trends.
 
-        2. **Customer Segmentation**:
-        - In marketing, PCA helps reduce customer behavior data into fewer dimensions, enabling clustering and segmentation analysis.
+    #     2. **Customer Segmentation**:
+    #     - In marketing, PCA helps reduce customer behavior data into fewer dimensions, enabling clustering and segmentation analysis.
 
-        ---
+    #     ---
 
-        ### **Applications of PCA**:
-        - **Exploratory Data Analysis (EDA)**: Identify patterns and clusters in datasets.
-        - **Preprocessing**: Reduce dimensionality before applying machine learning algorithms.
-        - **Visualization**: Plot high-dimensional data in 2D or 3D space for easier interpretation.
-        - **Feature Engineering**: Extract meaningful features for modeling.
+    #     ### **Applications of PCA**:
+    #     - **Exploratory Data Analysis (EDA)**: Identify patterns and clusters in datasets.
+    #     - **Preprocessing**: Reduce dimensionality before applying machine learning algorithms.
+    #     - **Visualization**: Plot high-dimensional data in 2D or 3D space for easier interpretation.
+    #     - **Feature Engineering**: Extract meaningful features for modeling.
 
-        ---
+    #     ---
 
-        ### **Summary of PCA Analysis**:
-        - In this analysis:
-        - The data is transformed into principal components, with **Principal Component 1 (PC1)** and **Principal Component 2 (PC2)** capturing the most variance.
-        - The **explained variance** metric indicates how much information is preserved in the reduced dimensions.
-        - The first two components explain the majority of the variance, allowing for a simplified yet informative representation of the dataset.
-        """)
+    #     ### **Summary of PCA Analysis**:
+    #     - In this analysis:
+    #     - The data is transformed into principal components, with **Principal Component 1 (PC1)** and **Principal Component 2 (PC2)** capturing the most variance.
+    #     - The **explained variance** metric indicates how much information is preserved in the reduced dimensions.
+    #     - The first two components explain the majority of the variance, allowing for a simplified yet informative representation of the dataset.
+    #     """)
 
     with tab2:
         st.subheader("Risk Parity Portfolio")
