@@ -12,7 +12,6 @@ def main():
     
     st.sidebar.subheader("Optimization Hyperparameters")
     risk_free_rate = st.sidebar.number_input("Risk-Free Rate (e.g., 0.03 for 3%)", min_value=0.0, max_value=1.0, value=0.03, step=0.01)
-    num_portfolios = st.sidebar.number_input("Monte Carlo Portfolios", min_value=100, max_value=100000, value=5000, step=100)
     confidence_level = st.sidebar.slider("VaR/CVaR Confidence Level", min_value=0.90, max_value=0.99, value=0.95, step=0.01)
     
     
@@ -81,99 +80,59 @@ def main():
                     # Tab 1: Optimal Weights
                     with tab1:
                         st.subheader("Optimized Portfolio Weights")
+                        
+                        try:
+                            # Monte Carlo Simulation with fixed 5000 simulations
+                            portfolio_df, optimal_portfolio, min_vol_portfolio = monte_carlo_simulation(
+                                returns, num_portfolios=5000, risk_free_rate=risk_free_rate
+                            )
 
-                        # Dropdown to select optimization method
-                        optimization_method = st.selectbox(
-                            "Choose Optimization Method:",
-                            ["Mean-Variance Optimization", "Monte Carlo Simulation"]
-                        )
+                            # Display optimal portfolio
+                            st.write("### Optimal Portfolio (Maximum Sharpe Ratio)")
+                            st.write(optimal_portfolio)
 
-                        if optimization_method == "Mean-Variance Optimization":
-                            # Mean-Variance Optimization
-                            result = optimize_portfolio(returns)  # Use the updated portfolio optimization function
+                            # Display minimum volatility portfolio
+                            st.write("### Minimum Volatility Portfolio")
+                            st.write(min_vol_portfolio)
 
-                            if result['success']:
-                                # Retrieve optimized weights
-                                optimal_weights = np.array(result['optimized_weights'], dtype=float)
+                            # Plot Monte Carlo portfolios
+                            monte_carlo_fig = go.Figure()
 
-                                # Calculate optimal investments
-                                total_capital = 100000  # Replace with your total investment capital
-                                optimal_investments = optimal_weights * total_capital
+                            monte_carlo_fig.add_trace(go.Scatter(
+                                x=portfolio_df['Volatility'],
+                                y=portfolio_df['Return'],
+                                mode='markers',
+                                marker=dict(color=portfolio_df['Sharpe'], colorscale='Viridis', colorbar=dict(title='Sharpe Ratio')),
+                                name='Portfolios',
+                            ))
 
-                                # Display the optimized portfolio as a DataFrame
-                                optimized_portfolio_df = pd.DataFrame({
-                                    "Ticker": tickers,
-                                    "Weight (%)": [round(w * 100, 2) for w in optimal_weights],
-                                    "Investment (₹)": [round(inv, 2) for inv in optimal_investments]
-                                })
-                                st.dataframe(optimized_portfolio_df)
+                            monte_carlo_fig.add_trace(go.Scatter(
+                                x=[optimal_portfolio['Volatility']],
+                                y=[optimal_portfolio['Return']],
+                                mode='markers',
+                                marker=dict(color='red', size=10),
+                                name='Maximum Sharpe Ratio Portfolio'
+                            ))
 
-                                # Plot Efficient Frontier
-                                frontier_fig = plot_efficient_frontier(returns, risk_free_rate=risk_free_rate, num_portfolios=num_portfolios)
-                                st.plotly_chart(frontier_fig)
+                            monte_carlo_fig.add_trace(go.Scatter(
+                                x=[min_vol_portfolio['Volatility']],
+                                y=[min_vol_portfolio['Return']],
+                                mode='markers',
+                                marker=dict(color='blue', size=10),
+                                name='Minimum Volatility Portfolio'
+                            ))
 
-                            else:
-                                # Handle optimization failure
-                                st.error(f"Portfolio optimization failed: {result['message']}")
+                            monte_carlo_fig.update_layout(
+                                title='Monte Carlo Simulation - Portfolio Optimization',
+                                xaxis_title='Volatility (Risk)',
+                                yaxis_title='Return',
+                                template='plotly_white'
+                            )
 
+                            st.plotly_chart(monte_carlo_fig)
 
-                        elif optimization_method == "Monte Carlo Simulation":
-                            try:
-                                # Monte Carlo Simulation
-                                portfolio_df, optimal_portfolio, min_vol_portfolio = monte_carlo_simulation(
-                                    returns, num_portfolios=num_portfolios, risk_free_rate=risk_free_rate
-                                )
-
-                                # Debug: Display intermediate data
-                                st.write("### Sample Monte Carlo Data")
-                                st.write(portfolio_df.head())
-
-                                # Display optimal portfolio
-                                st.write("### Optimal Portfolio (Maximum Sharpe Ratio)")
-                                st.write(optimal_portfolio)
-
-                                # Display minimum volatility portfolio
-                                st.write("### Minimum Volatility Portfolio")
-                                st.write(min_vol_portfolio)
-
-                                # Plot Monte Carlo portfolios
-                                monte_carlo_fig = go.Figure()
-
-                                monte_carlo_fig.add_trace(go.Scatter(
-                                    x=portfolio_df['Volatility'],
-                                    y=portfolio_df['Return'],
-                                    mode='markers',
-                                    marker=dict(color=portfolio_df['Sharpe'], colorscale='Viridis', colorbar=dict(title='Sharpe Ratio')),
-                                    name='Portfolios',
-                                ))
-
-                                monte_carlo_fig.add_trace(go.Scatter(
-                                    x=[optimal_portfolio['Volatility']],
-                                    y=[optimal_portfolio['Return']],
-                                    mode='markers',
-                                    marker=dict(color='red', size=10),
-                                    name='Maximum Sharpe Ratio Portfolio'
-                                ))
-
-                                monte_carlo_fig.add_trace(go.Scatter(
-                                    x=[min_vol_portfolio['Volatility']],
-                                    y=[min_vol_portfolio['Return']],
-                                    mode='markers',
-                                    marker=dict(color='blue', size=10),
-                                    name='Minimum Volatility Portfolio'
-                                ))
-
-                                monte_carlo_fig.update_layout(
-                                    title='Monte Carlo Simulation - Portfolio Optimization',
-                                    xaxis_title='Volatility (Risk)',
-                                    yaxis_title='Return',
-                                    template='plotly_white'
-                                )
-
-                                st.plotly_chart(monte_carlo_fig)
-
-                            except Exception as e:
-                                st.error(f"Error during Monte Carlo Simulation: {e}")
+                        except Exception as e:
+                            st.error(f"Error during Monte Carlo Simulation: {e}")
 
 
                     # Tab 2: Risk Metrics (VaR & CVaR)
