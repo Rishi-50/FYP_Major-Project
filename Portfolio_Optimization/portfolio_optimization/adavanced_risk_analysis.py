@@ -11,6 +11,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
 
 # Fetch historical data for given tickers
 def fetch_data(tickers, start_date, end_date):
@@ -285,7 +289,58 @@ def train_return_predictor_linear(returns, lookback=5, forecast_horizon=1):
     mse = mean_squared_error(y_test, y_pred)
     return model, mse
 
-
+def train_return_predictor_lstm(returns, lookback=5, forecast_horizon=1):
+    """
+    Train an LSTM model to predict returns.
+    
+    Parameters:
+        returns (pd.DataFrame): DataFrame containing asset returns
+        lookback (int): Number of past days to use for prediction
+        forecast_horizon (int): Number of days to forecast ahead
+        
+    Returns:
+        model: Trained LSTM model
+        mse: Mean squared error on test set
+    """
+    # Prepare data for LSTM
+    X, y = [], []
+    for i in range(len(returns) - lookback - forecast_horizon + 1):
+        X.append(returns.iloc[i:(i + lookback)].values)
+        y.append(returns.iloc[i + lookback + forecast_horizon - 1].values)
+    
+    X = np.array(X)
+    y = np.array(y)
+    
+    # Split data into train and test sets
+    train_size = int(len(X) * 0.8)
+    X_train, X_test = X[:train_size], X[train_size:]
+    y_train, y_test = y[:train_size], y[train_size:]
+    
+    # Build LSTM model
+    model = Sequential([
+        LSTM(50, return_sequences=True, input_shape=(lookback, returns.shape[1])),
+        Dropout(0.2),
+        LSTM(50),
+        Dropout(0.2),
+        Dense(returns.shape[1])
+    ])
+    
+    # Compile model
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+    
+    # Train model
+    model.fit(
+        X_train, y_train,
+        epochs=50,
+        batch_size=32,
+        validation_split=0.1,
+        verbose=0
+    )
+    
+    # Evaluate model
+    mse = mean_squared_error(y_test, model.predict(X_test))
+    
+    return model, mse
 
 # Main app
 def main():
@@ -410,17 +465,17 @@ def main():
             st.write(
                 """
                 - **Volatility** is a statistical measure that describes the extent to which the price of an asset fluctuates over time. In simple terms, it represents the level of uncertainty or risk associated with the asset's price movement. 
-                - High **volatility** implies that the asset’s price is likely to experience large fluctuations in a short period, which can result in significant gains or losses. Conversely, low volatility means the asset's price changes are smaller and more predictable, typically implying a lower level of risk.
+                - High **volatility** implies that the asset's price is likely to experience large fluctuations in a short period, which can result in significant gains or losses. Conversely, low volatility means the asset's price changes are smaller and more predictable, typically implying a lower level of risk.
                 
-                - **Forecasted volatility** is the estimated measure of an asset's future price fluctuations, typically derived from past price data. It provides an outlook on how much the asset’s price could vary over the forecast period, which is particularly useful for risk management and investment strategy. 
-                - Forecasting volatility is crucial because it helps investors anticipate the likelihood of significant price swings and assess whether the asset’s risk profile aligns with their investment objectives.
+                - **Forecasted volatility** is the estimated measure of an asset's future price fluctuations, typically derived from past price data. It provides an outlook on how much the asset's price could vary over the forecast period, which is particularly useful for risk management and investment strategy. 
+                - Forecasting volatility is crucial because it helps investors anticipate the likelihood of significant price swings and assess whether the asset's risk profile aligns with their investment objectives.
 
                 - **Interpretation of high forecasted volatility:**
                     - If the forecasted volatility is high, it indicates that there is a higher likelihood of large price movements in the forecast horizon (e.g., 10 days). This suggests that the asset may experience significant price changes, either upwards or downwards.
                     - High volatility can represent both risk and opportunity: it could lead to substantial returns, but it also increases the potential for substantial losses. Investors seeking greater profits may find high volatility attractive, but those with a lower risk tolerance may want to avoid such assets or hedge their positions.
 
                 - **Interpretation of low forecasted volatility:**
-                    - On the other hand, if forecasted volatility is low, it signals that the asset’s price is expected to remain relatively stable over the forecast horizon.
+                    - On the other hand, if forecasted volatility is low, it signals that the asset's price is expected to remain relatively stable over the forecast horizon.
                     - Low volatility is typically more attractive to risk-averse investors who prefer to invest in assets with less price fluctuation. Such assets can offer more predictable returns, making them ideal for conservative or long-term investors who prioritize stability over high returns.
                     
                 - Understanding forecasted volatility helps in shaping investment decisions. For instance, an investor might choose high-volatility assets for short-term speculative strategies, whereas low-volatility assets might be favored for long-term portfolio stability.
@@ -432,7 +487,7 @@ def main():
             st.markdown("### Return Prediction")
 
             # Options to choose between different models for return prediction
-            return_model_type = st.radio("Select Return Prediction Model:", options=["Linear Regression", "Random Forest"], index=0)
+            return_model_type = st.radio("Select Return Prediction Model:", options=["Linear Regression", "Random Forest", "LSTM"], index=0)
 
             # Forecast horizon and lookback options for prediction
             forecast_horizon = st.slider("Forecast Horizon (Days):", 1, 30, 5)
@@ -443,12 +498,20 @@ def main():
                     model, mse = train_return_predictor_linear(returns, lookback=lookback, forecast_horizon=forecast_horizon)
                 elif return_model_type == "Random Forest":
                     model, mse = train_return_predictor(returns, lookback=lookback, forecast_horizon=forecast_horizon)
+                elif return_model_type == "LSTM":
+                    model, mse = train_return_predictor_lstm(returns, lookback=lookback, forecast_horizon=forecast_horizon)
 
                 st.write(f"Model trained with Mean Squared Error (MSE): {mse:.4f}")
 
                 # Predict returns for the next period
-                latest_data = returns.iloc[-lookback:].values.flatten().reshape(1, -1)
-                predicted_returns = model.predict(latest_data).flatten()
+                if return_model_type == "LSTM":
+                    # For LSTM, we need to reshape the input differently
+                    latest_data = returns.iloc[-lookback:].values.reshape(1, lookback, returns.shape[1])
+                    predicted_returns = model.predict(latest_data).flatten()
+                else:
+                    # For other models
+                    latest_data = returns.iloc[-lookback:].values.flatten().reshape(1, -1)
+                    predicted_returns = model.predict(latest_data).flatten()
 
                 # Display predictions
                 st.write("### Predicted Returns for Each Asset")
@@ -482,12 +545,12 @@ def main():
                 - **How to use predicted returns**: Investors can use the predicted returns to inform their portfolio decisions. If a certain asset is predicted to have a high positive return, an investor might choose to allocate more capital to it, betting on future gains. Conversely, if the predicted return is negative or lower than other assets, the investor might choose to reduce their exposure to that asset or avoid it entirely.
                     - For example, if Asset A is predicted to have a high positive return and Asset B has a negative predicted return, an investor might decide to increase the weight of Asset A in their portfolio and reduce or eliminate their holdings in Asset B.
                     
-                - **Forecast horizon and volatility**: It’s crucial to consider the **forecast horizon** (the time frame for which the returns are predicted) alongside the predicted returns. For instance, a short-term prediction may show large returns, but those returns could be very volatile, while a long-term prediction might show more stable but moderate returns.
+                - **Forecast horizon and volatility**: It's crucial to consider the **forecast horizon** (the time frame for which the returns are predicted) alongside the predicted returns. For instance, a short-term prediction may show large returns, but those returns could be very volatile, while a long-term prediction might show more stable but moderate returns.
                 
                 - **Volatility and risk**: Predicted returns should not be viewed in isolation. Volatility predictions (which indicate the risk or price fluctuations of the asset) should also be taken into account. An asset with a high predicted return but also high forecasted volatility might carry substantial risk, while an asset with a moderate predicted return and low volatility might offer more predictable and safer returns.
                     - For example, an investor might be willing to take on high volatility if they believe the predicted return justifies the potential risk, while others may prefer more stable returns with lower risk, even if the returns are not as high.
                     
-                - **Strategic investment decisions**: By combining predicted returns with other information like volatility and the investor's risk tolerance, the model’s return forecasts can serve as a valuable tool for portfolio management. The goal is to balance risk and reward, allocating capital to assets that align with the investor’s objectives.
+                - **Strategic investment decisions**: By combining predicted returns with other information like volatility and the investor's risk tolerance, the model's return forecasts can serve as a valuable tool for portfolio management. The goal is to balance risk and reward, allocating capital to assets that align with the investor's objectives.
                 """
                 )
             except Exception as e:
