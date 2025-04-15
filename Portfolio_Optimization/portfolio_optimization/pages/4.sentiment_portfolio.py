@@ -10,28 +10,57 @@ from datetime import datetime, timedelta
 # Set page configuration
 st.set_page_config(page_title="Sentiment-Based Portfolio Optimization", layout="wide")
 
-# Stock symbol mapping for Yahoo Finance
-STOCK_SYMBOL_MAPPING = {
-    'INDUSINDBK': 'INDUSINDBK.NS',
-    'DIVISLAB': 'DIVISLAB.NS',
-    'SBIN': 'SBIN.NS',
+# Dictionary of Nifty 50 stocks with their Yahoo Finance symbols
+NIFTY_50_STOCKS = {
+    'ADANIENT': 'ADANIENT.NS',
+    'ADANIPORTS': 'ADANIPORTS.NS',
+    'APOLLOHOSP': 'APOLLOHOSP.NS',
+    'ASIANPAINT': 'ASIANPAINT.NS',
+    'AXISBANK': 'AXISBANK.NS',
+    'BAJAJ-AUTO': 'BAJAJ-AUTO.NS',
+    'BAJFINANCE': 'BAJFINANCE.NS',
     'BAJAJFINSV': 'BAJAJFINSV.NS',
+    'BPCL': 'BPCL.NS',
     'BHARTIARTL': 'BHARTIARTL.NS',
+    'BRITANNIA': 'BRITANNIA.NS',
+    'CIPLA': 'CIPLA.NS',
+    'COALINDIA': 'COALINDIA.NS',
+    'DIVISLAB': 'DIVISLAB.NS',
+    'DRREDDY': 'DRREDDY.NS',
+    'EICHERMOT': 'EICHERMOT.NS',
+    'GRASIM': 'GRASIM.NS',
+    'HCLTECH': 'HCLTECH.NS',
     'HDFCBANK': 'HDFCBANK.NS',
-    'INFY': 'INFY.NS',
-    'TCS': 'TCS.NS',
+    'HDFCLIFE': 'HDFCLIFE.NS',
+    'HEROMOTOCO': 'HEROMOTOCO.NS',
+    'HINDALCO': 'HINDALCO.NS',
     'HINDUNILVR': 'HINDUNILVR.NS',
     'ICICIBANK': 'ICICIBANK.NS',
-    'HDFC': 'HDFC.NS',
-    'RELIANCE': 'RELIANCE.NS',
-    'KOTAKBANK': 'KOTAKBANK.NS',
+    'INDUSINDBK': 'INDUSINDBK.NS',
+    'INFY': 'INFY.NS',
     'ITC': 'ITC.NS',
-    'HCLTECH': 'HCLTECH.NS',
-    'WIPRO': 'WIPRO.NS',
-    'AXISBANK': 'AXISBANK.NS',
-    'ASIANPAINT': 'ASIANPAINT.NS',
+    'JSWSTEEL': 'JSWSTEEL.NS',
+    'KOTAKBANK': 'KOTAKBANK.NS',
+    'LT': 'LT.NS',
+    'M&M': 'M&M.NS',
     'MARUTI': 'MARUTI.NS',
-    'ULTRACEMCO': 'ULTRACEMCO.NS'
+    'NESTLEIND': 'NESTLEIND.NS',
+    'NTPC': 'NTPC.NS',
+    'ONGC': 'ONGC.NS',
+    'POWERGRID': 'POWERGRID.NS',
+    'RELIANCE': 'RELIANCE.NS',
+    'SBILIFE': 'SBILIFE.NS',
+    'SBIN': 'SBIN.NS',
+    'SUNPHARMA': 'SUNPHARMA.NS',
+    'TATACONSUM': 'TATACONSUM.NS',
+    'TATAMOTORS': 'TATAMOTORS.NS',
+    'TATASTEEL': 'TATASTEEL.NS',
+    'TCS': 'TCS.NS',
+    'TECHM': 'TECHM.NS',
+    'TITAN': 'TITAN.NS',
+    'ULTRACEMCO': 'ULTRACEMCO.NS',
+    'UPL': 'UPL.NS',
+    'WIPRO': 'WIPRO.NS'
 }
 
 # Load sentiment data
@@ -104,7 +133,7 @@ def fetch_and_prepare_data(tickers, start_date, end_date):
     """Fetch and prepare historical price data for analysis"""
     try:
         # Map tickers to Yahoo Finance symbols
-        yf_tickers = [STOCK_SYMBOL_MAPPING.get(ticker, ticker) for ticker in tickers]
+        yf_tickers = [NIFTY_50_STOCKS.get(ticker, ticker) for ticker in tickers]
         
         # Fetch price data with error handling
         price_data = pd.DataFrame()
@@ -125,7 +154,7 @@ def fetch_and_prepare_data(tickers, start_date, end_date):
             st.error("Could not download price data for any selected stocks.")
             return None, None, None
         
-        if failed_downloads:
+        if failed_downloads:    
             st.warning(f"Could not download data for: {', '.join(failed_downloads)}")
         
         # Calculate returns
@@ -341,7 +370,7 @@ def main():
     #### 🎯 Stock Selection
     Choose stocks for your portfolio:
     """)
-    available_tickers = list(STOCK_SYMBOL_MAPPING.keys())
+    available_tickers = list(NIFTY_50_STOCKS.keys())
     if len(available_tickers) == 0:
         st.error("No stocks found in the sentiment data")
         return
