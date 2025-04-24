@@ -96,29 +96,103 @@ def forecast_volatility(data, asset, forecast_horizon=30, model_type="GARCH"):
         model_type (str): "ARCH" or "GARCH" to specify the model.
 
     Returns:
-        np.ndarray: Forecasted variances for the given horizon.
+        tuple: (forecasted_variances, evaluation_metrics)
     """
-    # Calculate returns
-    asset_returns = data[asset].pct_change().dropna() * 100  # Convert to percentage returns
+    try:
+        # Calculate returns
+        asset_returns = data[asset].pct_change().dropna() * 100  # Convert to percentage returns
+        
+        if len(asset_returns) < 60:  # Minimum required data points
+            raise ValueError("Insufficient data points for forecasting")
 
-    # Choose the model type
-    if model_type == "ARCH":
-        model = arch_model(asset_returns, vol="Arch", p=1)
-    elif model_type == "GARCH":
-        model = arch_model(asset_returns, vol="Garch", p=1, q=1)
-    else:
-        raise ValueError("Invalid model type. Choose 'ARCH' or 'GARCH'.")
+        # Split data for evaluation
+        train_size = int(len(asset_returns) * 0.8)
+        train_returns = asset_returns[:train_size]
+        test_returns = asset_returns[train_size:]
 
-    # Fit the model
-    res = model.fit(disp="off")
+        # Choose and fit the model
+        if model_type == "ARCH":
+            model = arch_model(train_returns, vol="Arch", p=1, rescale=False)
+        elif model_type == "GARCH":
+            model = arch_model(train_returns, vol="Garch", p=1, q=1, rescale=False)
+        else:
+            raise ValueError("Invalid model type. Choose 'ARCH' or 'GARCH'.")
 
-    # Forecast volatility
-    forecast = res.forecast(horizon=forecast_horizon)
+        # Fit the model with error handling
+        try:
+            res = model.fit(disp="off", show_warning=False, update_freq=0)
+        except Exception as e:
+            raise ValueError(f"Model fitting failed: {str(e)}")
 
-    # Extract the forecasted variances
-    forecasted_variances = forecast.variance.iloc[-1].values
+        # Generate predictions for the test period
+        predictions = []
+        for i in range(len(test_returns)):
+            try:
+                forecast = res.forecast(horizon=1, start=train_size + i - 1)
+                pred_var = np.sqrt(forecast.variance.values[-1, -1])
+                predictions.append(pred_var)
+            except Exception as e:
+                continue
+        
+        predictions = np.array(predictions)
 
-    return forecasted_variances
+        # Ensure predictions array is not empty
+        if len(predictions) == 0:
+            raise ValueError("No predictions generated")
+
+        # Calculate actual volatility (using rolling standard deviation of returns)
+        actual_vol = test_returns.rolling(window=5).std().dropna().values
+        pred_vol = predictions[:len(actual_vol)]  # Match lengths
+
+        # Ensure we have matching lengths for evaluation
+        min_len = min(len(actual_vol), len(pred_vol))
+        if min_len == 0:
+            raise ValueError("No overlapping data for evaluation")
+
+        actual_vol = actual_vol[:min_len]
+        pred_vol = pred_vol[:min_len]
+
+        # Calculate evaluation metrics
+        mse = np.mean((actual_vol - pred_vol) ** 2)
+        rmse = np.sqrt(mse)
+        mae = np.mean(np.abs(actual_vol - pred_vol))
+        
+        # Calculate directional accuracy
+        if min_len > 1:
+            actual_dir = np.diff(actual_vol) > 0
+            pred_dir = np.diff(pred_vol) > 0
+            dir_accuracy = np.mean(actual_dir == pred_dir)
+        else:
+            dir_accuracy = 0.0
+
+        # Forecast future volatility
+        try:
+            future_forecast = res.forecast(horizon=forecast_horizon)
+            if future_forecast.variance.empty:
+                raise ValueError("Empty forecast generated")
+                
+            forecasted_variances = np.sqrt(future_forecast.variance.iloc[-1].values)
+            
+            # Ensure we have at least one valid forecast
+            if len(forecasted_variances) == 0:
+                raise ValueError("No valid forecasts generated")
+                
+        except Exception as e:
+            # If forecasting fails, use the last known volatility as a simple forecast
+            last_vol = test_returns.rolling(window=5).std().iloc[-1]
+            forecasted_variances = np.array([last_vol] * forecast_horizon)
+
+        evaluation_metrics = {
+            'MSE': mse,
+            'RMSE': rmse,
+            'MAE': mae,
+            'Directional_Accuracy': dir_accuracy
+        }
+
+        return forecasted_variances, evaluation_metrics
+
+    except Exception as e:
+        raise Exception(f"Error in volatility forecasting: {str(e)}")
 
 
 # Detect anomalies using Isolation Forest for each asset
@@ -453,8 +527,14 @@ def main():
 
             for asset in tickers:
                 try:
-                    forecast = forecast_volatility(data, asset, forecast_horizon=10, model_type=model_type)
-                    forecast_results[asset] = forecast
+                    forecast, metrics = forecast_volatility(data, asset, forecast_horizon=10, model_type=model_type)
+                    forecast_results[asset] = {
+                        "Forecasted Volatility": forecast,
+                        "MSE": metrics['MSE'],
+                        "RMSE": metrics['RMSE'],
+                        "MAE": metrics['MAE'],
+                        "Directional Accuracy": metrics['Directional_Accuracy']
+                    }
                 except Exception as e:
                     st.warning(f"Failed to forecast for {asset}: {e}")
 
