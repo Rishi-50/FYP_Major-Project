@@ -4,8 +4,15 @@ import numpy as np
 import yfinance as yf
 import plotly.graph_objs as go
 from scipy.optimize import minimize
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from datetime import datetime, timedelta
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from sklearn.metrics import mean_squared_error
+import warnings
+warnings.filterwarnings('ignore')
 
 # Set page configuration
 st.set_page_config(page_title="Sentiment-Based Portfolio Optimization", layout="wide")
@@ -260,6 +267,283 @@ def plot_sentiment_portfolio_analysis(returns, sentiment_features, weights):
     
     return fig
 
+def create_sequences(X, y, time_steps=5):
+    """Create sequences for LSTM model"""
+    Xs, ys = [], []
+    for i in range(len(X) - time_steps):
+        Xs.append(X[i:(i + time_steps)])
+        ys.append(y[i + time_steps])
+    return np.array(Xs), np.array(ys)
+
+def build_lstm_model(input_shape, learning_rate=0.001):
+    """Build and compile LSTM model with optimized architecture"""
+    try:
+        # Set memory growth to prevent OOM errors
+        physical_devices = tf.config.list_physical_devices('GPU')
+        if physical_devices:
+            for device in physical_devices:
+                tf.config.experimental.set_memory_growth(device, True)
+    except:
+        pass
+
+    # More efficient architecture with better regularization
+    model = Sequential([
+        LSTM(32, return_sequences=True, input_shape=input_shape,
+             kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+        Dropout(0.2),
+        LSTM(16, return_sequences=False,
+             kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+        Dropout(0.2),
+        Dense(16, activation='relu',
+              kernel_regularizer=tf.keras.regularizers.l2(0.01)),
+        Dense(1)
+    ])
+    
+    # Use Adam optimizer with clipnorm only
+    optimizer = Adam(
+        learning_rate=learning_rate,
+        clipnorm=1.0  # Remove clipvalue, use only clipnorm
+    )
+    
+    model.compile(
+        optimizer=optimizer,
+        loss='huber',  # More robust to outliers than MSE
+        metrics=['mae']
+    )
+    return model
+
+def prepare_lstm_data(returns, sentiment_df, ticker, time_steps=5):
+    """Prepare data for LSTM model with better preprocessing"""
+    try:
+        # Get sentiment data for the ticker
+        ticker_sentiment = sentiment_df[sentiment_df['ticker'] == ticker].copy()
+        
+        # Convert index to datetime if it's not already
+        if not isinstance(ticker_sentiment.index, pd.DatetimeIndex):
+            ticker_sentiment.index = pd.to_datetime(ticker_sentiment['date'])
+        
+        # Ensure returns index is datetime
+        returns.index = pd.to_datetime(returns.index)
+        
+        # Align dates and resample to business days
+        start_date = max(returns.index.min(), ticker_sentiment.index.min())
+        end_date = min(returns.index.max(), ticker_sentiment.index.max())
+        
+        # Filter data to common date range
+        returns_filtered = returns.loc[start_date:end_date][ticker]
+        ticker_sentiment_filtered = ticker_sentiment.loc[start_date:end_date]
+        
+        # Create DataFrame with aligned data
+        data = pd.DataFrame({
+            'returns': returns_filtered,
+            'sentiment': ticker_sentiment_filtered['Sentiment_Score']
+        })
+        
+        # Handle missing data more robustly
+        data = data.fillna(method='ffill').fillna(method='bfill')
+        
+        # Add technical indicators with error handling
+        try:
+            data['rolling_mean'] = data['returns'].rolling(window=5, min_periods=1).mean()
+            data['rolling_std'] = data['returns'].rolling(window=5, min_periods=1).std()
+            data['momentum'] = data['returns'].diff(periods=5)
+        except Exception as e:
+            st.warning(f"Could not calculate some technical indicators for {ticker}: {str(e)}")
+            # Provide default values if calculation fails
+            data['rolling_mean'] = 0
+            data['rolling_std'] = 0
+            data['momentum'] = 0
+        
+        # Fill any remaining NaN values with 0
+        data = data.fillna(0)
+        
+        # Remove outliers more conservatively
+        for col in data.columns:
+            lower = data[col].quantile(0.005)
+            upper = data[col].quantile(0.995)
+            data[col] = data[col].clip(lower=lower, upper=upper)
+        
+        # Ensure we have enough data
+        if len(data) < max(30, time_steps * 2):  # Minimum 30 samples or 2x time_steps
+            st.warning(f"Insufficient data points for {ticker}")
+            return None
+        
+        # Scale the features
+        scaler = MinMaxScaler()
+        scaled_data = scaler.fit_transform(data)
+        
+        # Create sequences
+        X, y = create_sequences(scaled_data, scaled_data[:, 0], time_steps)
+        
+        # Ensure we have enough sequences
+        if len(X) < 30:
+            st.warning(f"Insufficient sequences for {ticker}")
+            return None
+        
+        # Split into train and test sets
+        train_size = int(len(X) * 0.8)
+        X_train = X[:train_size]
+        X_test = X[train_size:]
+        y_train = y[:train_size]
+        y_test = y[train_size:]
+        
+        # Verify shapes
+        if X_train.shape[0] == 0 or X_test.shape[0] == 0:
+            st.warning(f"Invalid split sizes for {ticker}")
+            return None
+        
+        return (X_train, y_train, X_test, y_test, scaler)
+    except Exception as e:
+        st.error(f"Error preparing LSTM data for {ticker}: {str(e)}")
+        return None
+
+def train_lstm_model(X_train, y_train, input_shape):
+    """Train LSTM model with optimized training process"""
+    try:
+        # Verify input shapes
+        if X_train.shape[0] == 0 or y_train.shape[0] == 0:
+            st.error("Empty training data")
+            return None, None
+            
+        model = build_lstm_model(input_shape)
+        
+        # Enhanced early stopping with reduced patience
+        early_stopping = tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=5,
+            restore_best_weights=True,
+            min_delta=0.001
+        )
+        
+        # Reduce learning rate on plateau
+        reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.2,
+            patience=3,
+            min_lr=0.0001
+        )
+        
+        try:
+            # Train model with optimized parameters and error handling
+            history = model.fit(
+                X_train, y_train,
+                epochs=50,
+                batch_size=16,
+                validation_split=0.2,
+                callbacks=[early_stopping, reduce_lr],
+                verbose=0
+            )
+            
+            # Verify training completed successfully
+            if history.history['loss'][-1] != history.history['loss'][-1]:  # Check for NaN
+                st.error("Training failed: NaN loss detected")
+                return None, None
+                
+            return model, history
+            
+        except Exception as e:
+            st.error(f"Error during model training: {str(e)}")
+            return None, None
+            
+    except Exception as e:
+        st.error(f"Error setting up model training: {str(e)}")
+        return None, None
+
+def predict_returns_with_lstm(model, X_test, scaler):
+    """Make predictions with error handling and confidence estimation"""
+    try:
+        if len(X_test) == 0:
+            st.error("Empty test data")
+            return None
+            
+        # Make predictions in smaller batches
+        batch_size = 16  # Reduced batch size
+        predictions = []
+        
+        for i in range(0, len(X_test), batch_size):
+            batch = X_test[i:i + batch_size]
+            try:
+                batch_pred = model.predict(batch, verbose=0)
+                predictions.extend(batch_pred.flatten())
+            except Exception as e:
+                st.error(f"Error in batch prediction: {str(e)}")
+                return None
+        
+        predictions = np.array(predictions)
+        
+        # Verify predictions
+        if np.any(np.isnan(predictions)):
+            st.error("NaN values in predictions")
+            return None
+        
+        # Create dummy array for inverse transform
+        dummy = np.zeros((len(predictions), scaler.n_features_in_))
+        dummy[:, 0] = predictions
+        
+        # Inverse transform predictions
+        try:
+            predictions_unscaled = scaler.inverse_transform(dummy)[:, 0]
+        except Exception as e:
+            st.error(f"Error in inverse transform: {str(e)}")
+            return None
+        
+        # Clip extreme predictions
+        predictions_unscaled = np.clip(
+            predictions_unscaled,
+            np.percentile(predictions_unscaled, 1),
+            np.percentile(predictions_unscaled, 99)
+        )
+        
+        return predictions_unscaled
+    except Exception as e:
+        st.error(f"Error in prediction pipeline: {str(e)}")
+        return None
+
+def analyze_stock_with_lstm(returns, sentiment_df, ticker, time_steps=5):
+    """Complete LSTM analysis pipeline with enhanced error handling"""
+    try:
+        # Check if we have enough data
+        if len(returns) < 30:
+            st.warning(f"Insufficient data for {ticker} to perform LSTM analysis")
+            return None
+            
+        # Prepare data
+        data = prepare_lstm_data(returns, sentiment_df, ticker, time_steps)
+        if data is None:
+            return None
+        
+        X_train, y_train, X_test, y_test, scaler = data
+        
+        # Train model
+        model, history = train_lstm_model(X_train, y_train, X_train.shape[1:])
+        if model is None:
+            return None
+        
+        # Make predictions
+        predictions = predict_returns_with_lstm(model, X_test, scaler)
+        if predictions is None:
+            return None
+        
+        # Calculate error metrics
+        mse = mean_squared_error(y_test, predictions)
+        rmse = np.sqrt(mse)
+        
+        # Calculate prediction confidence
+        confidence = 1 / (1 + rmse)
+        
+        return {
+            'predictions': predictions,
+            'actual': y_test,
+            'rmse': rmse,
+            'confidence': confidence,
+            'model': model,
+            'scaler': scaler,
+            'history': history.history if history else None
+        }
+    except Exception as e:
+        st.error(f"Error in LSTM analysis for {ticker}: {str(e)}")
+        return None
+
 def main():
     # Title and Introduction with better styling
     st.markdown("""
@@ -418,14 +702,16 @@ def main():
         )
         
         # Create tabs for organized display
-        tab1, tab2, tab3 = st.tabs([
-            "📈 Portfolio Analysis",
-            "🗞️ Sentiment Analysis",
-            "⚠️ Risk Assessment"
+        tab1, tab2 = st.tabs([
+            "📈 Portfolio Analysis & Insights",
+            "🤖 LSTM Predictions"
         ])
         
         with tab1:
-            st.markdown('<p class="section-header">Optimized Portfolio Allocation</p>', unsafe_allow_html=True)
+            st.markdown('<p class="section-header">Comprehensive Portfolio Analysis</p>', unsafe_allow_html=True)
+            
+            # Portfolio Allocation Section
+            st.markdown("### 📊 Portfolio Allocation and Performance")
             
             # Enhanced portfolio summary
             portfolio_summary = pd.DataFrame({
@@ -449,102 +735,8 @@ def main():
                 .background_gradient(subset=['Sentiment Score'], cmap='RdYlGn', vmin=-1, vmax=1)
             )
             
-            # Detailed explanation of portfolio metrics
-            st.markdown("""
-            <div class="explanation-box">
-            ### 📊 Understanding Portfolio Metrics
-            
-            1. **Portfolio Weights**
-               - Shows the optimal allocation for each stock
-               - Higher weights indicate greater importance in the portfolio
-               - Weights sum to 100% across all stocks
-            
-            2. **Expected Returns**
-               - Projected annual returns for each stock
-               - Based on historical performance and sentiment
-               - Higher values indicate better return potential
-            
-            3. **Volatility**
-               - Measures the risk of each stock
-               - Higher values indicate more price fluctuation
-               - Lower values suggest more stable returns
-            
-            4. **Sentiment Score**
-               - Current market sentiment (-1 to +1)
-               - Positive values indicate positive market sentiment
-               - Negative values suggest negative market sentiment
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Enhanced portfolio performance visualization
-            st.markdown("### 📈 Portfolio Performance vs. Market Sentiment")
-            
-            # Create an enhanced figure with better styling
-            fig = go.Figure()
-            
-            # Add cumulative returns line with improved styling
-            portfolio_returns = returns.dot(optimal_weights)
-            fig.add_trace(go.Scatter(
-                x=portfolio_returns.index,
-                y=portfolio_returns.cumsum(),
-                name="Portfolio Returns",
-                line=dict(color='#1E88E5', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(30,136,229,0.1)'
-            ))
-            
-            # Add sentiment line with improved styling
-            avg_sentiment = pd.DataFrame()
-            for ticker in returns.columns:
-                if ticker in sentiment_features:
-                    weight = optimal_weights[ticker]
-                    if ticker not in avg_sentiment.columns:
-                        avg_sentiment[ticker] = sentiment_features[ticker]['Sentiment_Score'] * weight
-            
-            avg_sentiment = avg_sentiment.sum(axis=1)
-            
-            fig.add_trace(go.Scatter(
-                x=avg_sentiment.index,
-                y=avg_sentiment,
-                name="Weighted Sentiment",
-                line=dict(color='#43A047', width=2, dash='dot'),
-                yaxis='y2'
-            ))
-            
-            # Update layout with better styling
-            fig.update_layout(
-                title={
-                    'text': 'Portfolio Performance vs Market Sentiment',
-                    'y':0.95,
-                    'x':0.5,
-                    'xanchor': 'center',
-                    'yanchor': 'top'
-                },
-                xaxis_title="Date",
-                yaxis_title="Cumulative Returns",
-                yaxis2=dict(
-                    title="Sentiment Score",
-                    overlaying="y",
-                    side="right",
-                    range=[-1, 1],
-                    showgrid=False
-                ),
-                template='plotly_white',
-                hovermode='x unified',
-                legend=dict(
-                    yanchor="top",
-                    y=0.99,
-                    xanchor="left",
-                    x=0.01,
-                    bgcolor='rgba(255,255,255,0.8)'
-                ),
-                margin=dict(l=60, r=60, t=50, b=50)
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Key metrics with explanations
-            st.markdown("### 📊 Key Portfolio Metrics")
+            # Key Portfolio Metrics
+            st.markdown("### 📈 Key Portfolio Metrics")
             metric_col1, metric_col2, metric_col3 = st.columns(3)
             
             total_return = (1 + portfolio_return) ** (252/len(returns)) - 1
@@ -568,58 +760,9 @@ def main():
                     f"{sharpe_ratio:.2f}",
                     help="Risk-adjusted return metric (higher is better)"
                 )
-            
-            # Detailed explanation of key metrics
-            st.markdown("""
-            <div class="explanation-box">
-            ### 📈 Understanding Key Metrics
-            
-            1. **Expected Annual Return**
-               - Projected yearly return of the portfolio
-               - Combines historical returns with sentiment analysis
-               - Higher values indicate better return potential
-            
-            2. **Portfolio Risk**
-               - Measures the volatility of the portfolio
-               - Based on historical price movements
-               - Lower values indicate more stable returns
-            
-            3. **Sharpe Ratio**
-               - Risk-adjusted return metric
-               - Higher values indicate better risk-adjusted returns
-               - Compares returns to risk-free rate
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with tab2:
-            st.markdown('<p class="section-header">Market Sentiment Analysis</p>', unsafe_allow_html=True)
-            
-            # Enhanced sentiment summary with explanations
-            st.markdown("""
-            <div class="explanation-box">
-            ### Understanding Sentiment Metrics
-            
-            1. **Current Sentiment**
-               - Latest market sentiment (-1 to +1)
-               - Positive values indicate positive news/market sentiment
-               - Negative values suggest negative market sentiment
-            
-            2. **Sentiment Trend**
-               - 20-day moving average of sentiment
-               - Shows the overall direction of market sentiment
-               - Helps identify persistent positive/negative sentiment
-            
-            3. **Sentiment Volatility**
-               - Measures stability of market sentiment
-               - Higher values indicate more uncertain or mixed sentiment
-               - Lower values suggest more stable market perception
-            
-            4. **Momentum**
-               - Rate of sentiment change
-               - Positive values show improving sentiment
-               - Negative values show deteriorating sentiment
-            </div>
-            """, unsafe_allow_html=True)
+
+            # Sentiment Analysis Section
+            st.markdown("### 🗞️ Market Sentiment Analysis")
             
             sentiment_summary = pd.DataFrame({
                 'Stock': selected_tickers,
@@ -640,34 +783,77 @@ def main():
                 .background_gradient(subset=['Current Sentiment'], cmap='RdYlGn', vmin=-1, vmax=1)
                 .background_gradient(subset=['Momentum'], cmap='RdYlGn')
             )
-        
-        with tab3:
-            st.markdown('<p class="section-header">Risk Assessment</p>', unsafe_allow_html=True)
+
+            # Portfolio Performance Visualization
+            st.markdown("### 📊 Portfolio Performance and Sentiment Trends")
             
-            # Risk metrics explanation
-            st.markdown("""
-            <div class="explanation-box">
-            ### Understanding Risk Metrics
+            # Create enhanced figure with both returns and sentiment
+            fig = go.Figure()
             
-            1. **Portfolio Volatility**: {:.2%}
-               - Measures the overall portfolio risk
-               - Based on historical price movements
-               - Lower values indicate more stable returns
+            # Add cumulative returns line
+            portfolio_returns = returns.dot(optimal_weights)
+            fig.add_trace(go.Scatter(
+                x=portfolio_returns.index,
+                y=portfolio_returns.cumsum(),
+                name="Portfolio Returns",
+                line=dict(color='#1E88E5', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(30,136,229,0.1)'
+            ))
             
-            2. **Sentiment Volatility**
-               - Tracks stability of market sentiment
-               - Higher values suggest uncertain market perception
-               - Used to adjust position sizes
+            # Add weighted sentiment line
+            avg_sentiment = pd.DataFrame()
+            for ticker in returns.columns:
+                if ticker in sentiment_features:
+                    weight = optimal_weights[ticker]
+                    if ticker not in avg_sentiment.columns:
+                        avg_sentiment[ticker] = sentiment_features[ticker]['Sentiment_Score'] * weight
             
-            3. **Diversification Analysis**
-               - Shows correlations between assets
-               - Helps identify concentration risks
-               - Guides portfolio rebalancing decisions
-            </div>
-            """.format(portfolio_risk), unsafe_allow_html=True)
+            avg_sentiment = avg_sentiment.sum(axis=1)
+            
+            fig.add_trace(go.Scatter(
+                x=avg_sentiment.index,
+                y=avg_sentiment,
+                name="Weighted Sentiment",
+                line=dict(color='#43A047', width=2, dash='dot'),
+                yaxis='y2'
+            ))
+            
+            fig.update_layout(
+                title={
+                    'text': 'Portfolio Performance vs Market Sentiment',
+                    'y':0.95,
+                    'x':0.5,
+                    'xanchor': 'center',
+                    'yanchor': 'top'
+                },
+                xaxis_title="Date",
+                yaxis_title="Cumulative Returns",
+                yaxis2=dict(
+                    title="Sentiment Score",
+                    overlaying="y",
+                    side="right",
+                    range=[-1, 1],
+                    showgrid=False
+                ),
+                template='plotly_white',
+                height=500,
+                hovermode='x unified',
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01,
+                    bgcolor='rgba(255,255,255,0.8)'
+                )
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Risk Assessment Section
+            st.markdown("### ⚠️ Risk Assessment and Correlation Analysis")
             
             # Display correlation heatmap
-            st.markdown("### 📊 Portfolio Correlation Analysis")
             corr_matrix = returns.corr()
             
             fig = go.Figure(data=go.Heatmap(
@@ -687,33 +873,186 @@ def main():
                     'xanchor': 'center',
                     'yanchor': 'top'
                 },
-                width=700,
-                height=700,
+                height=600,
                 margin=dict(l=60, r=60, t=50, b=50)
             )
             
             st.plotly_chart(fig, use_container_width=True)
-            
+
+            # Comprehensive Analysis Insights
             st.markdown("""
             <div class="explanation-box">
-            ### 📈 Interpreting the Correlation Heatmap
+            ### 🎯 Portfolio Insights Summary
             
-            1. **Correlation Values**
-               - Dark Red (1.0): Perfect positive correlation
-               - Dark Blue (-1.0): Perfect negative correlation
-               - White (0): No correlation
+            #### Portfolio Composition
+            - Diversification Level: {:.0%} of maximum possible
+            - Number of Significant Positions: {}
+            - Highest Weight Position: {} ({:.2%})
             
-            2. **Diversification Impact**
-               - Lower correlations between stocks indicate better diversification
-               - Helps identify potential concentration risks
-               - Guides portfolio rebalancing decisions
+            #### Risk-Return Profile
+            - Expected Annual Return: {:.2%}
+            - Portfolio Risk Level: {:.2%}
+            - Risk-Adjusted Return (Sharpe): {:.2f}
             
-            3. **Risk Management**
-               - Use correlations to identify similar stocks
-               - Avoid overexposure to highly correlated assets
-               - Balance portfolio with uncorrelated assets
+            #### Market Sentiment
+            - Overall Portfolio Sentiment: {:.2f}
+            - Sentiment Trend: {}
+            - Number of Positive Sentiment Stocks: {}
+            
+            #### Risk Analysis
+            - Average Stock Correlation: {:.2f}
+            - Diversification Benefit: {:.2%}
+            - Risk Concentration: {:.2%}
+            </div>
+            """.format(
+                1 - optimal_weights.max(),  # Diversification level
+                sum(optimal_weights > 0.05),  # Significant positions
+                optimal_weights.idxmax(),  # Highest weight stock
+                optimal_weights.max(),  # Highest weight
+                portfolio_return,  # Expected return
+                portfolio_risk,  # Portfolio risk
+                sharpe_ratio,  # Sharpe ratio
+                np.mean(list(latest_sentiments.values())),  # Overall sentiment
+                "Improving" if np.mean(list(latest_sentiments.values())) > 0 else "Declining",
+                sum(1 for s in latest_sentiments.values() if s > 0),  # Positive sentiment count
+                corr_matrix.mean().mean(),  # Average correlation
+                1 - portfolio_risk / (volatility * optimal_weights).sum(),  # Diversification benefit
+                (optimal_weights ** 2).sum()  # Risk concentration
+            ), unsafe_allow_html=True)
+        
+        with tab2:
+            st.markdown('<p class="section-header">LSTM Return Predictions</p>', unsafe_allow_html=True)
+            
+            # LSTM Analysis explanation
+            st.markdown("""
+            <div class="explanation-box">
+            ### 🤖 LSTM Model Analysis
+            
+            This section uses Long Short-Term Memory (LSTM) neural networks to predict future returns based on:
+            1. Historical price movements
+            2. Market sentiment scores
+            3. Technical indicators
+            
+            The model analyzes patterns in both price movements and sentiment to forecast potential future returns.
             </div>
             """, unsafe_allow_html=True)
+            
+            # Progress bar for LSTM analysis
+            lstm_progress = st.progress(0)
+            lstm_status = st.empty()
+            
+            # Store LSTM results
+            lstm_results = {}
+            
+            # Analyze each stock with LSTM
+            for idx, ticker in enumerate(selected_tickers):
+                lstm_status.text(f"Training LSTM model for {ticker}...")
+                lstm_progress.progress((idx + 1) / len(selected_tickers))
+                
+                result = analyze_stock_with_lstm(returns, sentiment_df, ticker)
+                if result is not None:
+                    lstm_results[ticker] = result
+            
+            lstm_status.empty()
+            lstm_progress.empty()
+            
+            if lstm_results:
+                # Display LSTM predictions for each stock
+                for ticker in selected_tickers:
+                    if ticker in lstm_results:
+                        st.markdown(f"### {ticker} Predictions")
+                        
+                        result = lstm_results[ticker]
+                        
+                        # Create prediction plot
+                        fig = go.Figure()
+            
+                        # Add actual returns
+                        fig.add_trace(go.Scatter(
+                            y=result['actual'],
+                            name='Actual Returns',
+                            line=dict(color='#1E88E5')
+                        ))
+                        
+                        # Add predictions
+                        fig.add_trace(go.Scatter(
+                            y=result['predictions'],
+                            name='Predicted Returns',
+                            line=dict(color='#43A047', dash='dash')
+                        ))
+            
+                        fig.update_layout(
+                            title=f"{ticker} - LSTM Return Predictions",
+                            xaxis_title="Time",
+                            yaxis_title="Returns",
+                            template='plotly_white',
+                            height=400
+                        )
+            
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Display metrics
+                        st.metric(
+                            "Prediction RMSE",
+                            f"{result['rmse']:.4f}",
+                            help="Root Mean Square Error of predictions (lower is better)"
+                        )
+                        
+                        # Add prediction insights
+                        last_prediction = result['predictions'][-1]
+                        prediction_direction = "positive" if last_prediction > 0 else "negative"
+                        
+                        st.markdown(f"""
+                        <div class="feature-box">
+                        #### Prediction Insights
+                        - Latest predicted return: {last_prediction:.2%}
+                        - Predicted trend: {prediction_direction.title()}
+                        - Model confidence (based on RMSE): {result['confidence']:.2%}
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                # Aggregate predictions analysis
+                st.markdown("### 📊 Aggregate Predictions Analysis")
+                
+                # Calculate average predicted returns
+                avg_predictions = {}
+                for ticker in lstm_results:
+                    avg_predictions[ticker] = np.mean(lstm_results[ticker]['predictions'][-5:])  # Last 5 predictions
+                
+                prediction_df = pd.DataFrame({
+                    'Stock': list(avg_predictions.keys()),
+                    'Predicted Return': list(avg_predictions.values()),
+                    'Model RMSE': [lstm_results[ticker]['rmse'] for ticker in avg_predictions],
+                    'Weight in Portfolio': [optimal_weights[ticker] for ticker in avg_predictions]
+                })
+                
+                st.dataframe(
+                    prediction_df.style
+                    .format({
+                        'Predicted Return': '{:.2%}',
+                        'Model RMSE': '{:.4f}',
+                        'Weight in Portfolio': '{:.2%}'
+                    })
+                    .background_gradient(subset=['Predicted Return'], cmap='RdYlGn')
+                )
+                
+                # Prediction-based insights
+                weighted_pred_return = sum(avg_predictions[ticker] * optimal_weights[ticker] 
+                                        for ticker in avg_predictions)
+                
+                st.markdown(f"""
+                <div class="explanation-box">
+                ### 🎯 Portfolio Prediction Insights
+                
+                - Predicted Portfolio Return: {weighted_pred_return:.2%}
+                - Number of Stocks with Positive Predictions: {sum(1 for v in avg_predictions.values() if v > 0)}
+                - Number of Stocks with Negative Predictions: {sum(1 for v in avg_predictions.values() if v < 0)}
+                
+                These predictions combine both technical analysis and sentiment data to provide a comprehensive forecast.
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.warning("Could not generate LSTM predictions for any selected stocks. Please try with different stocks or time periods.")
 
 if __name__ == "__main__":
     main() 

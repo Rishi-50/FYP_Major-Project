@@ -375,7 +375,6 @@ def main():
                 
                 # Stock selection for prediction
                 prediction_ticker = st.selectbox("Select stock for prediction", tickers)
-                future_days = st.slider("Prediction horizon (days)", 7, 60, 30)
                 
                 # Show warning if data is limited
                 if len(data) < 100:
@@ -384,7 +383,7 @@ def main():
                 # Show progress during prediction
                 with st.spinner("Generating price predictions..."):
                     future_dates, predicted_prices = stock_price_prediction(
-                        data, prediction_ticker, future_days=future_days
+                        data, prediction_ticker, future_days=7
                     )
                 
                 if future_dates is None or predicted_prices is None:
@@ -400,6 +399,7 @@ def main():
                     historical = data[[prediction_ticker]].copy()
                     historical.columns = ['Actual_Price']
                     
+                    # Create prediction plot
                     fig = go.Figure()
                     
                     # Add historical prices
@@ -477,7 +477,7 @@ def main():
                     st.subheader("Prediction Insights")
                     col1, col2, col3 = st.columns(3)
                     col1.metric("Current Price", f"₹{current_price:.2f}")
-                    col2.metric(f"Predicted Price ({future_days} days)", f"₹{future_price:.2f}")
+                    col2.metric(f"Predicted Price (7 days)", f"₹{future_price:.2f}")
                     col3.metric("Predicted Return", f"{predicted_return:.2f}%", f"{predicted_return:.2f}%")
                     
                     # Add prediction explanation

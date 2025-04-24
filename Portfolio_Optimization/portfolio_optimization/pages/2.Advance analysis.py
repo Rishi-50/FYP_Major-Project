@@ -116,17 +116,16 @@ def main():
         if prediction_type == "Volatility Forecasting":
             # Volatility Forecasting
             st.markdown("### Volatility Forecasting")
-            model_type = st.radio("Select Volatility Model:", options=["ARCH", "GARCH"], index=1)
             forecast_horizon = st.slider("Forecast Horizon (Days):", 5, 30, 10)
             
             # Initialize containers for results
             forecast_results = {}
             failed_assets = []
 
-            with st.spinner('Calculating volatility forecasts...'):
+            with st.spinner('Calculating volatility forecasts using GARCH model...'):
                 for asset in tickers:
                     try:
-                        forecast, metrics = forecast_volatility(data, asset, forecast_horizon=forecast_horizon, model_type=model_type)
+                        forecast, metrics = forecast_volatility(data, asset, forecast_horizon=forecast_horizon, model_type="GARCH")
                         
                         # Ensure we have valid forecast values
                         if len(forecast) > 0:
@@ -156,7 +155,7 @@ def main():
                     st.dataframe(volatility_df.style.format({'Forecasted Volatility (%)': '{:.2f}'}))
 
                     # Display evaluation metrics
-                    st.subheader("Model Evaluation Metrics")
+                    st.subheader("GARCH Model Evaluation Metrics")
                     metrics_df = pd.DataFrame({
                         'Asset': list(forecast_results.keys()),
                         'MSE': [results['MSE'] for results in forecast_results.values()],
@@ -178,10 +177,11 @@ def main():
                         fig.add_trace(go.Bar(
                             x=volatility_df.index,
                             y=volatility_df['Forecasted Volatility (%)'],
-                            name='Forecasted Volatility'
+                            name='Forecasted Volatility',
+                            marker_color='lightblue'
                         ))
                         fig.update_layout(
-                            title=f"{model_type} Model: Forecasted Volatility Comparison",
+                            title="GARCH Model: Forecasted Volatility Comparison",
                             xaxis_title="Assets",
                             yaxis_title="Forecasted Volatility (%)",
                             template="plotly_white"
@@ -200,7 +200,7 @@ def main():
                 st.warning("No forecasts could be generated. Please check your data and parameters.")
 
             st.markdown("""
-            #### Interpretation of Metrics:
+            #### Interpretation of GARCH Model Metrics:
             - **MSE (Mean Squared Error)**: Measures the average squared difference between predicted and actual volatility. Lower values indicate better predictions.
             - **RMSE (Root Mean Squared Error)**: Square root of MSE, provides error metric in the same unit as volatility. Lower values are better.
             - **MAE (Mean Absolute Error)**: Average absolute difference between predicted and actual volatility. Less sensitive to outliers than MSE.
@@ -208,7 +208,7 @@ def main():
             """)
 
             # Interpretation of Volatility Forecast
-            st.markdown("#### Volatility Forecast Interpretation:")
+            st.markdown("#### GARCH Model Volatility Forecast Interpretation:")
             st.write(
                 """
                 - **Volatility** is a statistical measure that describes the extent to which the price of an asset fluctuates over time. In simple terms, it represents the level of uncertainty or risk associated with the asset's price movement. 
@@ -230,11 +230,8 @@ def main():
             )
 
         elif prediction_type == "Return Prediction":
-            # Return Prediction
-            st.markdown("### Return Prediction")
-
-            # Options to choose between different models for return prediction
-            return_model_type = st.radio("Select Return Prediction Model:", options=["Linear Regression", "Random Forest", "LSTM"], index=0)
+            # Return Prediction using LSTM
+            st.markdown("### LSTM Return Prediction")
 
             # Forecast horizon and lookback options for prediction
             forecast_horizon = st.slider("Forecast Horizon (Days):", 1, 30, 1)
@@ -247,21 +244,13 @@ def main():
                     return
 
                 latest_data = returns.iloc[-lookback:].values
-                if return_model_type == "LSTM":
-                    latest_data = latest_data.reshape(1, lookback, returns.shape[1])
-                else:
-                    latest_data = latest_data.flatten().reshape(1, -1)
+                latest_data = latest_data.reshape(1, lookback, returns.shape[1])
 
-                # Train the selected model
-                if return_model_type == "Linear Regression":
-                    model, mse = train_return_predictor_linear(returns, lookback=lookback, forecast_horizon=forecast_horizon)
-                elif return_model_type == "Random Forest":
-                    model, mse = train_return_predictor(returns, lookback=lookback, forecast_horizon=forecast_horizon)
-                else:  # LSTM
-                    model, mse = train_return_predictor_lstm(returns, lookback=lookback, forecast_horizon=forecast_horizon)
+                # Train LSTM model
+                model, mse = train_return_predictor_lstm(returns, lookback=lookback, forecast_horizon=forecast_horizon)
                 
                 # Display evaluation metrics
-                st.write("### Model Evaluation Metrics")
+                st.write("### LSTM Model Evaluation Metrics")
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
@@ -278,7 +267,7 @@ def main():
                     mae = np.mean(np.abs(predicted - actual))
                     st.metric("Mean Absolute Error (MAE)", f"{mae:.6f}")
                 
-                st.write("#### Interpretation of Metrics:")
+                st.write("#### Interpretation of LSTM Metrics:")
                 st.markdown("""
                 - **MSE**: Measures the average squared difference between predicted and actual returns. Lower values indicate better predictions.
                 - **RMSE**: Square root of MSE, provides error metric in the same unit as the returns. Lower values are better.
@@ -295,7 +284,7 @@ def main():
                 predicted_returns_percent_str = [f"{value:.2f}%" for value in predicted_returns_percent]
 
                 # Display predictions
-                st.write("### Predicted Returns for Each Asset")
+                st.write("### LSTM Predicted Returns for Each Asset")
                 predicted_df = pd.DataFrame({
                     "Asset": returns.columns,
                     "Predicted Return": predicted_returns_percent_str
@@ -311,7 +300,7 @@ def main():
                     marker_color=['red' if x < 0 else 'green' for x in predicted_returns_percent]
                 ))
                 fig.update_layout(
-                    title=f"{return_model_type} Model: Predicted Returns for Next Period",
+                    title="LSTM Model: Predicted Returns for Next Period",
                     xaxis_title="Asset",
                     yaxis_title="Predicted Return (%)",
                     template="plotly_white",
@@ -320,7 +309,7 @@ def main():
                 st.plotly_chart(fig)
 
                 # Add confidence intervals to the predictions
-                st.subheader("Prediction Confidence")
+                st.subheader("LSTM Prediction Confidence")
                 confidence_df = pd.DataFrame({
                     "Asset": returns.columns,
                     "Predicted Return (%)": [f"{x:.2f}%" for x in predicted_returns_percent],
@@ -328,10 +317,10 @@ def main():
                 })
                 st.dataframe(confidence_df)
 
-                st.markdown("#### Predicted Return Interpretation:")
+                st.markdown("#### LSTM Model Return Prediction Interpretation:")
                 st.write(
                 f"""
-                The {return_model_type} model has generated predictions for each asset's returns. Here's how to interpret the results:
+                The LSTM (Long Short-Term Memory) model has generated predictions for each asset's returns. Here's how to interpret the results:
                 
                 - **Predicted returns** show the model's estimate of how each asset may perform in the next {forecast_horizon} day(s), based on the past {lookback} days of data.
                 
@@ -352,7 +341,7 @@ def main():
                 """
                 )
             except Exception as e:
-                st.error(f"An error occurred during return prediction: {str(e)}")
+                st.error(f"An error occurred during LSTM return prediction: {str(e)}")
                 st.write("Please try adjusting the lookback period or forecast horizon.")
 
         
