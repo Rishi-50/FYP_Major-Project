@@ -12,6 +12,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 from sklearn.metrics import mean_squared_error
 import warnings
+import plotly.express as px
 warnings.filterwarnings('ignore')
 
 # Set page configuration
@@ -957,100 +958,310 @@ def main():
             lstm_progress.empty()
             
             if lstm_results:
-                # Display LSTM predictions for each stock
-                for ticker in selected_tickers:
-                    if ticker in lstm_results:
-                        st.markdown(f"### {ticker} Predictions")
-                        
-                        result = lstm_results[ticker]
-                        
-                        # Create prediction plot
-                        fig = go.Figure()
-            
-                        # Add actual returns
-                        fig.add_trace(go.Scatter(
-                            y=result['actual'],
-                            name='Actual Returns',
-                            line=dict(color='#1E88E5')
-                        ))
-                        
-                        # Add predictions
-                        fig.add_trace(go.Scatter(
-                            y=result['predictions'],
-                            name='Predicted Returns',
-                            line=dict(color='#43A047', dash='dash')
-                        ))
-            
-                        fig.update_layout(
-                            title=f"{ticker} - LSTM Return Predictions",
-                            xaxis_title="Time",
-                            yaxis_title="Returns",
-                            template='plotly_white',
-                            height=400
-                        )
-            
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Display metrics
-                        st.metric(
-                            "Prediction RMSE",
-                            f"{result['rmse']:.4f}",
-                            help="Root Mean Square Error of predictions (lower is better)"
-                        )
-                        
-                        # Add prediction insights
-                        last_prediction = result['predictions'][-1]
-                        prediction_direction = "positive" if last_prediction > 0 else "negative"
-                        
-                        st.markdown(f"""
-                        <div class="feature-box">
-                        #### Prediction Insights
-                        - Latest predicted return: {last_prediction:.2%}
-                        - Predicted trend: {prediction_direction.title()}
-                        - Model confidence (based on RMSE): {result['confidence']:.2%}
-                        </div>
-                        """, unsafe_allow_html=True)
+                # Add toggle for combined vs individual views
+                view_option = st.radio(
+                    "Prediction View",
+                    ["Combined View", "Individual Views"],
+                    horizontal=True
+                )
                 
-                # Aggregate predictions analysis
-                st.markdown("### 📊 Aggregate Predictions Analysis")
-                
-                # Calculate average predicted returns
+                # Calculate average predicted returns (moved outside the views logic)
                 avg_predictions = {}
                 for ticker in lstm_results:
                     avg_predictions[ticker] = np.mean(lstm_results[ticker]['predictions'][-5:])  # Last 5 predictions
                 
-                prediction_df = pd.DataFrame({
-                    'Stock': list(avg_predictions.keys()),
-                    'Predicted Return': list(avg_predictions.values()),
-                    'Model RMSE': [lstm_results[ticker]['rmse'] for ticker in avg_predictions],
-                    'Weight in Portfolio': [optimal_weights[ticker] for ticker in avg_predictions]
-                })
-                
-                st.dataframe(
-                    prediction_df.style
-                    .format({
-                        'Predicted Return': '{:.2%}',
-                        'Model RMSE': '{:.4f}',
-                        'Weight in Portfolio': '{:.2%}'
+                if view_option == "Combined View":
+                    # Create a combined plot for all stocks
+                    st.markdown("### Combined LSTM Predictions for All Selected Stocks")
+                    
+                    # Create combined prediction plot - ensuring it's a line graph
+                    fig = go.Figure()
+                    
+                    # Create color scale based on portfolio weights
+                    colorscale = px.colors.qualitative.Plotly
+                    
+                    # Prepare shared x-axis data points (indices) for consistent x-axis
+                    x_indices = list(range(max(len(lstm_results[ticker]['predictions']) for ticker in lstm_results if ticker in selected_tickers)))
+                    
+                    # Add each stock's predictions to the combined plot
+                    for i, ticker in enumerate(selected_tickers):
+                        if ticker in lstm_results:
+                            result = lstm_results[ticker]
+                            weight = optimal_weights[ticker]
+                            
+                            # Calculate line width based on portfolio weight (1-5 px)
+                            line_width = 1 + (weight / optimal_weights.max()) * 4
+                            
+                            # Set color from colorscale
+                            color = colorscale[i % len(colorscale)]
+                            
+                            # Create custom hover template
+                            hover_template = (
+                                f"<b>{ticker}</b><br>" +
+                                "Return: %{y:.2%}<br>" +
+                                f"Portfolio Weight: {weight:.2%}<br>" +
+                                f"Avg Prediction: {avg_predictions[ticker]:.2%}"
+                            )
+                            
+                            # Add predictions for this stock as a line
+                            pred_values = result['predictions']
+                            x_values = x_indices[:len(pred_values)]
+                            
+                            fig.add_trace(go.Scatter(
+                                x=x_values,
+                                y=pred_values,
+                                name=f'{ticker} ({weight:.1%})',
+                                mode='lines',
+                                line=dict(
+                                    width=line_width,
+                                    color=color
+                                ),
+                                hovertemplate=hover_template
+                            ))
+                    
+                    # Add a zero reference line
+                    fig.add_hline(
+                        y=0, 
+                        line_dash="dash", 
+                        line_color="gray", 
+                        annotation_text="Zero Return",
+                        annotation_position="bottom right"
+                    )
+                    
+                    fig.update_layout(
+                        title="Combined LSTM Return Predictions",
+                        xaxis_title="Time Steps",
+                        yaxis_title="Predicted Returns",
+                        template='plotly_white',
+                        height=500,
+                        legend=dict(
+                            yanchor="top",
+                            y=0.99,
+                            xanchor="left",
+                            x=0.01
+                        ),
+                        hovermode='x unified',
+                        yaxis=dict(tickformat='.2%')  # Format y-axis as percentage
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Add aggregate predictions analysis below the combined chart
+                    st.markdown("### 📊 Aggregate Predictions Analysis")
+                    
+                    prediction_df = pd.DataFrame({
+                        'Stock': list(avg_predictions.keys()),
+                        'Predicted Return': list(avg_predictions.values()),
+                        'Model RMSE': [lstm_results[ticker]['rmse'] for ticker in avg_predictions],
+                        'Weight in Portfolio': [optimal_weights[ticker] for ticker in avg_predictions]
                     })
-                    .background_gradient(subset=['Predicted Return'], cmap='RdYlGn')
-                )
+                    
+                    st.dataframe(
+                        prediction_df.style
+                        .format({
+                            'Predicted Return': '{:.2%}',
+                            'Model RMSE': '{:.4f}',
+                            'Weight in Portfolio': '{:.2%}'
+                        })
+                        .background_gradient(subset=['Predicted Return'], cmap='RdYlGn')
+                    )
+                    
+                    # Add bar chart of predicted returns by stock
+                    st.markdown("### Predicted Returns by Stock")
+                    
+                    fig_bar = go.Figure()
+                    
+                    # Sort stocks by predicted return
+                    sorted_stocks = sorted(avg_predictions.items(), key=lambda x: x[1], reverse=True)
+                    sorted_tickers = [item[0] for item in sorted_stocks]
+                    sorted_returns = [item[1] for item in sorted_stocks]
+                    
+                    # Set color based on return (positive/negative)
+                    colors = ['#4CAF50' if ret > 0 else '#F44336' for ret in sorted_returns]
+                    
+                    # Create bar chart
+                    fig_bar.add_trace(go.Bar(
+                        x=sorted_tickers,
+                        y=sorted_returns,
+                        marker_color=colors,
+                        text=[f"{ret:.2%}" for ret in sorted_returns],
+                        textposition='auto',
+                        hovertemplate=(
+                            "<b>%{x}</b><br>" +
+                            "Predicted Return: %{y:.2%}<br>" +
+                            "Portfolio Weight: %{customdata:.2%}<br>"
+                        ),
+                        customdata=[optimal_weights[ticker] for ticker in sorted_tickers]
+                    ))
+                    
+                    # Add a horizontal line at y=0 (zero return)
+                    fig_bar.add_hline(
+                        y=0, 
+                        line_dash="dash", 
+                        line_color="gray"
+                    )
+                    
+                    fig_bar.update_layout(
+                        title="Stock Predicted Returns Ranking",
+                        xaxis_title="Stock",
+                        yaxis_title="Predicted Return",
+                        yaxis=dict(tickformat='.2%'),
+                        template='plotly_white',
+                        height=400,
+                        margin=dict(l=50, r=50, t=80, b=80)
+                    )
+                    
+                    # Rotate x-axis labels if many stocks
+                    if len(sorted_tickers) > 5:
+                        fig_bar.update_layout(
+                            xaxis=dict(tickangle=-45)
+                        )
+                    
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                    
+                    # Add scatter plot of predicted returns vs portfolio weights
+                    st.markdown("### Predicted Returns vs Portfolio Weights")
+                    
+                    fig_scatter = go.Figure()
+                    
+                    # Create bubble chart
+                    bubble_sizes = [1/lstm_results[ticker]['rmse'] * 100 for ticker in avg_predictions.keys()]
+                    max_size = max(bubble_sizes) if bubble_sizes else 50
+                    normalized_sizes = [size/max_size * 50 + 10 for size in bubble_sizes]
+                    
+                    fig_scatter.add_trace(go.Scatter(
+                        x=list(avg_predictions.values()),
+                        y=[optimal_weights[ticker] for ticker in avg_predictions.keys()],
+                        mode='markers+text',
+                        marker=dict(
+                            size=normalized_sizes,
+                            color=list(avg_predictions.values()),
+                            colorscale='RdYlGn',
+                            colorbar=dict(title="Predicted Return"),
+                            showscale=True,
+                            sizemode='diameter',
+                            line=dict(width=1, color='black')
+                        ),
+                        text=list(avg_predictions.keys()),
+                        textposition="top center",
+                        hovertemplate=(
+                            "<b>%{text}</b><br>" +
+                            "Predicted Return: %{x:.2%}<br>" +
+                            "Portfolio Weight: %{y:.2%}<br>" +
+                            "Model Confidence: %{marker.size:.2f}"
+                        )
+                    ))
+                    
+                    # Add a vertical line at y=0 (zero return)
+                    fig_scatter.add_vline(
+                        x=0, 
+                        line_dash="dash", 
+                        line_color="gray",
+                        annotation_text="Zero Return", 
+                        annotation_position="top right"
+                    )
+                    
+                    fig_scatter.update_layout(
+                        title="Stock Predicted Returns vs Portfolio Weights",
+                        xaxis_title="Predicted Return",
+                        yaxis_title="Portfolio Weight",
+                        xaxis=dict(tickformat='.2%'),
+                        yaxis=dict(tickformat='.2%'),
+                        template='plotly_white',
+                        height=500,
+                        margin=dict(l=50, r=50, t=80, b=50)
+                    )
+                    
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    
+                    # Prediction-based insights
+                    weighted_pred_return = sum(avg_predictions[ticker] * optimal_weights[ticker] 
+                                           for ticker in avg_predictions)
+                    
+                    st.markdown(f"""
+                    <div class="explanation-box">
+                    ### 🎯 Portfolio Prediction Insights
+                    
+                    - Predicted Portfolio Return: {weighted_pred_return:.2%}
+                    - Number of Stocks with Positive Predictions: {sum(1 for v in avg_predictions.values() if v > 0)}
+                    - Number of Stocks with Negative Predictions: {sum(1 for v in avg_predictions.values() if v < 0)}
+                    
+                    These predictions combine both technical analysis and sentiment data to provide a comprehensive forecast.
+                    </div>
+                    """, unsafe_allow_html=True)
                 
-                # Prediction-based insights
-                weighted_pred_return = sum(avg_predictions[ticker] * optimal_weights[ticker] 
-                                        for ticker in avg_predictions)
+                if view_option == "Individual Views":
+                    # Display individual LSTM predictions for each stock
+                    for ticker in selected_tickers:
+                        if ticker in lstm_results:
+                            st.markdown(f"### {ticker} Predictions")
+                            
+                            result = lstm_results[ticker]
+                            
+                            # Create prediction plot
+                            fig = go.Figure()
+                            
+                            # Create x-axis values (time steps)
+                            x_values = list(range(len(result['actual'])))
                 
-                st.markdown(f"""
-                <div class="explanation-box">
-                ### 🎯 Portfolio Prediction Insights
+                            # Add actual returns
+                            fig.add_trace(go.Scatter(
+                                x=x_values,
+                                y=result['actual'],
+                                name='Actual Returns',
+                                mode='lines',
+                                line=dict(color='#1E88E5', width=2)
+                            ))
+                            
+                            # Add predictions
+                            fig.add_trace(go.Scatter(
+                                x=x_values,
+                                y=result['predictions'],
+                                name='Predicted Returns',
+                                mode='lines',
+                                line=dict(color='#43A047', width=2, dash='dash')
+                            ))
+                            
+                            # Add zero reference line
+                            fig.add_hline(
+                                y=0, 
+                                line_dash="dash", 
+                                line_color="gray", 
+                                annotation_text="Zero Return",
+                                annotation_position="bottom right"
+                            )
                 
-                - Predicted Portfolio Return: {weighted_pred_return:.2%}
-                - Number of Stocks with Positive Predictions: {sum(1 for v in avg_predictions.values() if v > 0)}
-                - Number of Stocks with Negative Predictions: {sum(1 for v in avg_predictions.values() if v < 0)}
+                            fig.update_layout(
+                                title=f"{ticker} - LSTM Return Predictions",
+                                xaxis_title="Time Steps",
+                                yaxis_title="Returns",
+                                template='plotly_white',
+                                height=400,
+                                yaxis=dict(tickformat='.2%'),
+                                hovermode='x unified'
+                            )
                 
-                These predictions combine both technical analysis and sentiment data to provide a comprehensive forecast.
-                </div>
-                """, unsafe_allow_html=True)
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Display metrics
+                            st.metric(
+                                "Prediction RMSE",
+                                f"{result['rmse']:.4f}",
+                                help="Root Mean Square Error of predictions (lower is better)"
+                            )
+                            
+                            # Add prediction insights
+                            last_prediction = result['predictions'][-1]
+                            prediction_direction = "positive" if last_prediction > 0 else "negative"
+                            
+                            st.markdown(f"""
+                            <div class="feature-box">
+                            #### Prediction Insights
+                            - Latest predicted return: {last_prediction:.2%}
+                            - Predicted trend: {prediction_direction.title()}
+                            - Model confidence (based on RMSE): {result['confidence']:.2%}
+                            </div>
+                            """, unsafe_allow_html=True)
             else:
                 st.warning("Could not generate LSTM predictions for any selected stocks. Please try with different stocks or time periods.")
 

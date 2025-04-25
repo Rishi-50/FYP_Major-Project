@@ -600,16 +600,160 @@ def main():
                 )
                 st.dataframe(predicted_df)
 
-                # Plot predictions
-                fig = go.Figure()
-                fig.add_trace(go.Bar(x=predicted_df["Asset"], y=predicted_df["Predicted Return"], name="Predicted Returns"))
-                fig.update_layout(
+                # Create line graph for all stocks
+                st.write("### Line Graph of Predicted Returns")
+                
+                # Allow user to adjust number of periods to forecast
+                actual_periods = st.slider("Number of periods to visualize:", 1, min(forecast_horizon, 30), min(5, forecast_horizon))
+                
+                try:
+                    # Initialize progress bar
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    all_predictions = []
+                    
+                    for period in range(actual_periods):
+                        # Update progress
+                        progress = int((period + 1) / actual_periods * 100)
+                        progress_bar.progress(progress)
+                        status_text.text(f"Generating prediction {period + 1}/{actual_periods}...")
+                        
+                        try:
+                            if return_model_type == "LSTM":
+                                if period == 0:
+                                    # First prediction uses actual data
+                                    pred_input = returns.iloc[-lookback:].values.reshape(1, lookback, returns.shape[1])
+                                else:
+                                    # Subsequent predictions use rolling window with previous predictions
+                                    # Limit recursive predictions to avoid error amplification
+                                    if period < 10:  # Only use previous predictions for a limited number of steps
+                                        new_data = np.vstack([pred_input[0, 1:, :], [prev_pred]])
+                                        pred_input = new_data.reshape(1, lookback, returns.shape[1])
+                                    else:
+                                        # For longer horizons, add small random noise to the last prediction
+                                        # to avoid unrealistic projections
+                                        noise = np.random.normal(0, 0.001, size=prev_pred.shape)
+                                        prev_pred = prev_pred + noise
+                                
+                                prev_pred = model.predict(pred_input).flatten()
+                                
+                                # Limit extreme predictions
+                                prev_pred = np.clip(prev_pred, -0.1, 0.1)  # Limit to reasonable daily returns
+                                
+                                all_predictions.append(prev_pred)
+                            else:
+                                if period == 0:
+                                    # First prediction uses actual data
+                                    pred_input = returns.iloc[-lookback:].values.flatten().reshape(1, -1)
+                                else:
+                                    # Create a rolling window for prediction with safeguards
+                                    if period < 10:  # Only use previous predictions for a limited number of steps
+                                        window_size = len(returns.columns)
+                                        new_data = np.append(pred_input[0, window_size:], prev_pred)
+                                        pred_input = new_data.reshape(1, -1)
+                                    else:
+                                        # For longer horizons, add small random noise to the last prediction
+                                        noise = np.random.normal(0, 0.001, size=prev_pred.shape)
+                                        prev_pred = prev_pred + noise
+                                
+                                prev_pred = model.predict(pred_input).flatten()
+                                
+                                # Limit extreme predictions
+                                prev_pred = np.clip(prev_pred, -0.1, 0.1)  # Limit to reasonable daily returns
+                                
+                                all_predictions.append(prev_pred)
+                        except Exception as e:
+                            st.warning(f"Error in prediction for period {period+1}: {str(e)}")
+                            # If we encounter an error, use the last successful prediction or zeros
+                            if all_predictions:
+                                all_predictions.append(all_predictions[-1])  # Use last prediction
+                            else:
+                                all_predictions.append(np.zeros(len(returns.columns)))  # Use zeros
+                    
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # Check if we have any predictions
+                    if not all_predictions:
+                        raise ValueError("Failed to generate predictions for any period")
+                    
+                    # Create a DataFrame for plotting
+                    prediction_df = pd.DataFrame(all_predictions, columns=returns.columns)
+                    
+                    # Calculate cumulative returns for better visualization
+                    cumulative_option = st.checkbox("Show cumulative returns", value=False)
+                    
+                    if cumulative_option:
+                        for col in prediction_df.columns:
+                            prediction_df[col] = (1 + prediction_df[col]).cumprod() - 1
+                        y_axis_title = "Cumulative Predicted Return"
+                    else:
+                        y_axis_title = "Predicted Return per Period"
+                    
+                    # Plot line graph for predictions
+                    fig_line = go.Figure()
+                    
+                    for asset in returns.columns:
+                        fig_line.add_trace(go.Scatter(
+                            y=prediction_df[asset],
+                            x=list(range(1, len(prediction_df) + 1)),
+                            mode='lines+markers',
+                            name=asset
+                        ))
+                    
+                    fig_line.update_layout(
+                        title=f"Predicted Returns Over Next {len(prediction_df)} Periods",
+                        xaxis_title="Future Period",
+                        yaxis_title=y_axis_title,
+                        yaxis=dict(tickformat='.2%'),
+                        template="plotly_white",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        height=500
+                    )
+                    
+                    # Add zero reference line
+                    fig_line.add_hline(
+                        y=0, 
+                        line_dash="dash", 
+                        line_color="gray",
+                        annotation_text="Zero Return",
+                        annotation_position="bottom right"
+                    )
+                    
+                    st.plotly_chart(fig_line, use_container_width=True)
+                    
+                    # Add download button for prediction data
+                    csv = prediction_df.to_csv(index=False)
+                    st.download_button(
+                        label="Download Prediction Data as CSV",
+                        data=csv,
+                        file_name="stock_return_predictions.csv",
+                        mime="text/csv",
+                    )
+                    
+                    # Add note about the nature of predictions
+                    st.info("""
+                    **Note:** Multi-period forecasts become less reliable as the forecast horizon extends. 
+                    The predictions shown here should be used as general directional guidance rather than precise forecasts.
+                    """)
+                    
+                except Exception as e:
+                    st.error(f"Error generating multi-period predictions: {str(e)}")
+                    st.info("Displaying single-period prediction only.")
+
+                # Plot bar chart for single-period prediction
+                fig_bar = go.Figure()
+                fig_bar.add_trace(go.Bar(x=predicted_df["Asset"], y=predicted_df["Predicted Return"], name="Predicted Returns"))
+                fig_bar.update_layout(
                     title="Predicted Returns for Next Period",
                     xaxis_title="Asset",
                     yaxis_title="Predicted Return",
                     template="plotly_white"
                 )
-                st.plotly_chart(fig)
+                st.plotly_chart(fig_bar)
+
                 st.markdown("#### Predicted Return Interpretation:")
                 st.write(
                 """
