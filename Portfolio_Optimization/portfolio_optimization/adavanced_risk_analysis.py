@@ -1,5 +1,3 @@
-# TODO: UNCOMMENT THE FULL CODE TO RUN
-
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -13,6 +11,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
 
 # Fetch historical data for given tickers
 def fetch_data(tickers, start_date, end_date):
@@ -94,29 +96,103 @@ def forecast_volatility(data, asset, forecast_horizon=30, model_type="GARCH"):
         model_type (str): "ARCH" or "GARCH" to specify the model.
 
     Returns:
-        np.ndarray: Forecasted variances for the given horizon.
+        tuple: (forecasted_variances, evaluation_metrics)
     """
-    # Calculate returns
-    asset_returns = data[asset].pct_change().dropna() * 100  # Convert to percentage returns
+    try:
+        # Calculate returns
+        asset_returns = data[asset].pct_change().dropna() * 100  # Convert to percentage returns
+        
+        if len(asset_returns) < 60:  # Minimum required data points
+            raise ValueError("Insufficient data points for forecasting")
 
-    # Choose the model type
-    if model_type == "ARCH":
-        model = arch_model(asset_returns, vol="Arch", p=1)
-    elif model_type == "GARCH":
-        model = arch_model(asset_returns, vol="Garch", p=1, q=1)
-    else:
-        raise ValueError("Invalid model type. Choose 'ARCH' or 'GARCH'.")
+        # Split data for evaluation
+        train_size = int(len(asset_returns) * 0.8)
+        train_returns = asset_returns[:train_size]
+        test_returns = asset_returns[train_size:]
 
-    # Fit the model
-    res = model.fit(disp="off")
+        # Choose and fit the model
+        if model_type == "ARCH":
+            model = arch_model(train_returns, vol="Arch", p=1, rescale=False)
+        elif model_type == "GARCH":
+            model = arch_model(train_returns, vol="Garch", p=1, q=1, rescale=False)
+        else:
+            raise ValueError("Invalid model type. Choose 'ARCH' or 'GARCH'.")
 
-    # Forecast volatility
-    forecast = res.forecast(horizon=forecast_horizon)
+        # Fit the model with error handling
+        try:
+            res = model.fit(disp="off", show_warning=False, update_freq=0)
+        except Exception as e:
+            raise ValueError(f"Model fitting failed: {str(e)}")
 
-    # Extract the forecasted variances
-    forecasted_variances = forecast.variance.iloc[-1].values
+        # Generate predictions for the test period
+        predictions = []
+        for i in range(len(test_returns)):
+            try:
+                forecast = res.forecast(horizon=1, start=train_size + i - 1)
+                pred_var = np.sqrt(forecast.variance.values[-1, -1])
+                predictions.append(pred_var)
+            except Exception as e:
+                continue
+        
+        predictions = np.array(predictions)
 
-    return forecasted_variances
+        # Ensure predictions array is not empty
+        if len(predictions) == 0:
+            raise ValueError("No predictions generated")
+
+        # Calculate actual volatility (using rolling standard deviation of returns)
+        actual_vol = test_returns.rolling(window=5).std().dropna().values
+        pred_vol = predictions[:len(actual_vol)]  # Match lengths
+
+        # Ensure we have matching lengths for evaluation
+        min_len = min(len(actual_vol), len(pred_vol))
+        if min_len == 0:
+            raise ValueError("No overlapping data for evaluation")
+
+        actual_vol = actual_vol[:min_len]
+        pred_vol = pred_vol[:min_len]
+
+        # Calculate evaluation metrics
+        mse = np.mean((actual_vol - pred_vol) ** 2)
+        rmse = np.sqrt(mse)
+        mae = np.mean(np.abs(actual_vol - pred_vol))
+        
+        # Calculate directional accuracy
+        if min_len > 1:
+            actual_dir = np.diff(actual_vol) > 0
+            pred_dir = np.diff(pred_vol) > 0
+            dir_accuracy = np.mean(actual_dir == pred_dir)
+        else:
+            dir_accuracy = 0.0
+
+        # Forecast future volatility
+        try:
+            future_forecast = res.forecast(horizon=forecast_horizon)
+            if future_forecast.variance.empty:
+                raise ValueError("Empty forecast generated")
+                
+            forecasted_variances = np.sqrt(future_forecast.variance.iloc[-1].values)
+            
+            # Ensure we have at least one valid forecast
+            if len(forecasted_variances) == 0:
+                raise ValueError("No valid forecasts generated")
+                
+        except Exception as e:
+            # If forecasting fails, use the last known volatility as a simple forecast
+            last_vol = test_returns.rolling(window=5).std().iloc[-1]
+            forecasted_variances = np.array([last_vol] * forecast_horizon)
+
+        evaluation_metrics = {
+            'MSE': mse,
+            'RMSE': rmse,
+            'MAE': mae,
+            'Directional_Accuracy': dir_accuracy
+        }
+
+        return forecasted_variances, evaluation_metrics
+
+    except Exception as e:
+        raise Exception(f"Error in volatility forecasting: {str(e)}")
 
 
 # Detect anomalies using Isolation Forest for each asset
@@ -130,72 +206,72 @@ def detect_anomalies(returns):
     return anomalies
 
 
-# def plot_pca_results(pca_data, explained_variance):
-#     """
-#     Creates an interactive PCA scatter plot.
+def plot_pca_results(pca_data, explained_variance):
+    """
+    Creates an interactive PCA scatter plot.
 
-#     Parameters:
-#     - pca_data: DataFrame with 'PC1', 'PC2', and optional labels for tooltips.
-#     - explained_variance: Percentage of variance explained by the components.
+    Parameters:
+    - pca_data: DataFrame with 'PC1', 'PC2', and optional labels for tooltips.
+    - explained_variance: Percentage of variance explained by the components.
 
-#     Returns:
-#     - fig: Plotly interactive figure.
-#     """
-#     # Ensure 'Label' column exists for tooltips (if not, create a default)
-#     if 'Label' not in pca_data.columns:
-#         pca_data['Label'] = pca_data.index
+    Returns:
+    - fig: Plotly interactive figure.
+    """
+    # Ensure 'Label' column exists for tooltips (if not, create a default)
+    if 'Label' not in pca_data.columns:
+        pca_data['Label'] = pca_data.index
 
-#     # Create a scatter plot
-#     fig = go.Figure()
+    # Create a scatter plot
+    fig = go.Figure()
 
-#     fig.add_trace(go.Scatter(
-#         x=pca_data['PC1'],
-#         y=pca_data['PC2'],
-#         mode='markers',
-#         marker=dict(
-#             size=10,
-#             color=pca_data['PC1'],  # Color by PC1 for better visual effect
-#             colorscale='Viridis',
-#             showscale=True,
-#             colorbar=dict(title="PC1 Value")
-#         ),
-#         text=pca_data['Label'],  # Add labels to tooltips
-#         hovertemplate=(
-#             "<b>Label:</b> %{text}<br>"
-#             "<b>PC1:</b> %{x:.2f}<br>"
-#             "<b>PC2:</b> %{y:.2f}<br>"
-#             "<extra></extra>"
-#         ),
-#         name='PCA Components'
-#     ))
+    fig.add_trace(go.Scatter(
+        x=pca_data['PC1'],
+        y=pca_data['PC2'],
+        mode='markers',
+        marker=dict(
+            size=10,
+            color=pca_data['PC1'],  # Color by PC1 for better visual effect
+            colorscale='Viridis',
+            showscale=True,
+            colorbar=dict(title="PC1 Value")
+        ),
+        text=pca_data['Label'],  # Add labels to tooltips
+        hovertemplate=(
+            "<b>Label:</b> %{text}<br>"
+            "<b>PC1:</b> %{x:.2f}<br>"
+            "<b>PC2:</b> %{y:.2f}<br>"
+            "<extra></extra>"
+        ),
+        name='PCA Components'
+    ))
 
-#     # Add explained variance to the title
-#     fig.update_layout(
-#         title=f"PCA Results<br> Explained Variance: PC1: {explained_variance[0]*100:.2f}%, PC2: {explained_variance[1]*100:.2f}%",
-#         xaxis=dict(title='Principal Component 1'),
-#         yaxis=dict(title='Principal Component 2'),
-#         template='plotly_white',
-#         hovermode='closest',
-#     )
+    # Add explained variance to the title
+    fig.update_layout(
+        title=f"PCA Results<br> Explained Variance: PC1: {explained_variance[0]*100:.2f}%, PC2: {explained_variance[1]*100:.2f}%",
+        xaxis=dict(title='Principal Component 1'),
+        yaxis=dict(title='Principal Component 2'),
+        template='plotly_white',
+        hovermode='closest',
+    )
 
-#     # Add interactivity: Show a reference line at the origin
-#     fig.add_trace(go.Scatter(
-#         x=[0, 0],
-#         y=[pca_data['PC2'].min(), pca_data['PC2'].max()],
-#         mode='lines',
-#         line=dict(dash='dash', color='gray'),
-#         showlegend=False
-#     ))
+    # Add interactivity: Show a reference line at the origin
+    fig.add_trace(go.Scatter(
+        x=[0, 0],
+        y=[pca_data['PC2'].min(), pca_data['PC2'].max()],
+        mode='lines',
+        line=dict(dash='dash', color='gray'),
+        showlegend=False
+    ))
 
-#     fig.add_trace(go.Scatter(
-#         x=[pca_data['PC1'].min(), pca_data['PC1'].max()],
-#         y=[0, 0],
-#         mode='lines',
-#         line=dict(dash='dash', color='gray'),
-#         showlegend=False
-#     ))
+    fig.add_trace(go.Scatter(
+        x=[pca_data['PC1'].min(), pca_data['PC1'].max()],
+        y=[0, 0],
+        mode='lines',
+        line=dict(dash='dash', color='gray'),
+        showlegend=False
+    ))
 
-#     return fig
+    return fig
 
 
 
@@ -287,7 +363,58 @@ def train_return_predictor_linear(returns, lookback=5, forecast_horizon=1):
     mse = mean_squared_error(y_test, y_pred)
     return model, mse
 
-
+def train_return_predictor_lstm(returns, lookback=5, forecast_horizon=1):
+    """
+    Train an LSTM model to predict returns.
+    
+    Parameters:
+        returns (pd.DataFrame): DataFrame containing asset returns
+        lookback (int): Number of past days to use for prediction
+        forecast_horizon (int): Number of days to forecast ahead
+        
+    Returns:
+        model: Trained LSTM model
+        mse: Mean squared error on test set
+    """
+    # Prepare data for LSTM
+    X, y = [], []
+    for i in range(len(returns) - lookback - forecast_horizon + 1):
+        X.append(returns.iloc[i:(i + lookback)].values)
+        y.append(returns.iloc[i + lookback + forecast_horizon - 1].values)
+    
+    X = np.array(X)
+    y = np.array(y)
+    
+    # Split data into train and test sets
+    train_size = int(len(X) * 0.8)
+    X_train, X_test = X[:train_size], X[train_size:]
+    y_train, y_test = y[:train_size], y[train_size:]
+    
+    # Build LSTM model
+    model = Sequential([
+        LSTM(50, return_sequences=True, input_shape=(lookback, returns.shape[1])),
+        Dropout(0.2),
+        LSTM(50),
+        Dropout(0.2),
+        Dense(returns.shape[1])
+    ])
+    
+    # Compile model
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
+    
+    # Train model
+    model.fit(
+        X_train, y_train,
+        epochs=50,
+        batch_size=32,
+        validation_split=0.1,
+        verbose=0
+    )
+    
+    # Evaluate model
+    mse = mean_squared_error(y_test, model.predict(X_test))
+    
+    return model, mse
 
 # Main app
 def main():
@@ -400,8 +527,14 @@ def main():
 
             for asset in tickers:
                 try:
-                    forecast = forecast_volatility(data, asset, forecast_horizon=10, model_type=model_type)
-                    forecast_results[asset] = forecast
+                    forecast, metrics = forecast_volatility(data, asset, forecast_horizon=10, model_type=model_type)
+                    forecast_results[asset] = {
+                        "Forecasted Volatility": forecast,
+                        "MSE": metrics['MSE'],
+                        "RMSE": metrics['RMSE'],
+                        "MAE": metrics['MAE'],
+                        "Directional Accuracy": metrics['Directional_Accuracy']
+                    }
                 except Exception as e:
                     st.warning(f"Failed to forecast for {asset}: {e}")
 
@@ -412,17 +545,17 @@ def main():
             st.write(
                 """
                 - **Volatility** is a statistical measure that describes the extent to which the price of an asset fluctuates over time. In simple terms, it represents the level of uncertainty or risk associated with the asset's price movement. 
-                - High **volatility** implies that the asset’s price is likely to experience large fluctuations in a short period, which can result in significant gains or losses. Conversely, low volatility means the asset's price changes are smaller and more predictable, typically implying a lower level of risk.
+                - High **volatility** implies that the asset's price is likely to experience large fluctuations in a short period, which can result in significant gains or losses. Conversely, low volatility means the asset's price changes are smaller and more predictable, typically implying a lower level of risk.
                 
-                - **Forecasted volatility** is the estimated measure of an asset's future price fluctuations, typically derived from past price data. It provides an outlook on how much the asset’s price could vary over the forecast period, which is particularly useful for risk management and investment strategy. 
-                - Forecasting volatility is crucial because it helps investors anticipate the likelihood of significant price swings and assess whether the asset’s risk profile aligns with their investment objectives.
+                - **Forecasted volatility** is the estimated measure of an asset's future price fluctuations, typically derived from past price data. It provides an outlook on how much the asset's price could vary over the forecast period, which is particularly useful for risk management and investment strategy. 
+                - Forecasting volatility is crucial because it helps investors anticipate the likelihood of significant price swings and assess whether the asset's risk profile aligns with their investment objectives.
 
                 - **Interpretation of high forecasted volatility:**
                     - If the forecasted volatility is high, it indicates that there is a higher likelihood of large price movements in the forecast horizon (e.g., 10 days). This suggests that the asset may experience significant price changes, either upwards or downwards.
                     - High volatility can represent both risk and opportunity: it could lead to substantial returns, but it also increases the potential for substantial losses. Investors seeking greater profits may find high volatility attractive, but those with a lower risk tolerance may want to avoid such assets or hedge their positions.
 
                 - **Interpretation of low forecasted volatility:**
-                    - On the other hand, if forecasted volatility is low, it signals that the asset’s price is expected to remain relatively stable over the forecast horizon.
+                    - On the other hand, if forecasted volatility is low, it signals that the asset's price is expected to remain relatively stable over the forecast horizon.
                     - Low volatility is typically more attractive to risk-averse investors who prefer to invest in assets with less price fluctuation. Such assets can offer more predictable returns, making them ideal for conservative or long-term investors who prioritize stability over high returns.
                     
                 - Understanding forecasted volatility helps in shaping investment decisions. For instance, an investor might choose high-volatility assets for short-term speculative strategies, whereas low-volatility assets might be favored for long-term portfolio stability.
@@ -434,7 +567,7 @@ def main():
             st.markdown("### Return Prediction")
 
             # Options to choose between different models for return prediction
-            return_model_type = st.radio("Select Return Prediction Model:", options=["Linear Regression", "Random Forest"], index=0)
+            return_model_type = st.radio("Select Return Prediction Model:", options=["Linear Regression", "Random Forest", "LSTM"], index=0)
 
             # Forecast horizon and lookback options for prediction
             forecast_horizon = st.slider("Forecast Horizon (Days):", 1, 30, 5)
@@ -445,12 +578,20 @@ def main():
                     model, mse = train_return_predictor_linear(returns, lookback=lookback, forecast_horizon=forecast_horizon)
                 elif return_model_type == "Random Forest":
                     model, mse = train_return_predictor(returns, lookback=lookback, forecast_horizon=forecast_horizon)
+                elif return_model_type == "LSTM":
+                    model, mse = train_return_predictor_lstm(returns, lookback=lookback, forecast_horizon=forecast_horizon)
 
                 st.write(f"Model trained with Mean Squared Error (MSE): {mse:.4f}")
 
                 # Predict returns for the next period
-                latest_data = returns.iloc[-lookback:].values.flatten().reshape(1, -1)
-                predicted_returns = model.predict(latest_data).flatten()
+                if return_model_type == "LSTM":
+                    # For LSTM, we need to reshape the input differently
+                    latest_data = returns.iloc[-lookback:].values.reshape(1, lookback, returns.shape[1])
+                    predicted_returns = model.predict(latest_data).flatten()
+                else:
+                    # For other models
+                    latest_data = returns.iloc[-lookback:].values.flatten().reshape(1, -1)
+                    predicted_returns = model.predict(latest_data).flatten()
 
                 # Display predictions
                 st.write("### Predicted Returns for Each Asset")
@@ -459,16 +600,160 @@ def main():
                 )
                 st.dataframe(predicted_df)
 
-                # Plot predictions
-                fig = go.Figure()
-                fig.add_trace(go.Bar(x=predicted_df["Asset"], y=predicted_df["Predicted Return"], name="Predicted Returns"))
-                fig.update_layout(
+                # Create line graph for all stocks
+                st.write("### Line Graph of Predicted Returns")
+                
+                # Allow user to adjust number of periods to forecast
+                actual_periods = st.slider("Number of periods to visualize:", 1, min(forecast_horizon, 30), min(5, forecast_horizon))
+                
+                try:
+                    # Initialize progress bar
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    all_predictions = []
+                    
+                    for period in range(actual_periods):
+                        # Update progress
+                        progress = int((period + 1) / actual_periods * 100)
+                        progress_bar.progress(progress)
+                        status_text.text(f"Generating prediction {period + 1}/{actual_periods}...")
+                        
+                        try:
+                            if return_model_type == "LSTM":
+                                if period == 0:
+                                    # First prediction uses actual data
+                                    pred_input = returns.iloc[-lookback:].values.reshape(1, lookback, returns.shape[1])
+                                else:
+                                    # Subsequent predictions use rolling window with previous predictions
+                                    # Limit recursive predictions to avoid error amplification
+                                    if period < 10:  # Only use previous predictions for a limited number of steps
+                                        new_data = np.vstack([pred_input[0, 1:, :], [prev_pred]])
+                                        pred_input = new_data.reshape(1, lookback, returns.shape[1])
+                                    else:
+                                        # For longer horizons, add small random noise to the last prediction
+                                        # to avoid unrealistic projections
+                                        noise = np.random.normal(0, 0.001, size=prev_pred.shape)
+                                        prev_pred = prev_pred + noise
+                                
+                                prev_pred = model.predict(pred_input).flatten()
+                                
+                                # Limit extreme predictions
+                                prev_pred = np.clip(prev_pred, -0.1, 0.1)  # Limit to reasonable daily returns
+                                
+                                all_predictions.append(prev_pred)
+                            else:
+                                if period == 0:
+                                    # First prediction uses actual data
+                                    pred_input = returns.iloc[-lookback:].values.flatten().reshape(1, -1)
+                                else:
+                                    # Create a rolling window for prediction with safeguards
+                                    if period < 10:  # Only use previous predictions for a limited number of steps
+                                        window_size = len(returns.columns)
+                                        new_data = np.append(pred_input[0, window_size:], prev_pred)
+                                        pred_input = new_data.reshape(1, -1)
+                                    else:
+                                        # For longer horizons, add small random noise to the last prediction
+                                        noise = np.random.normal(0, 0.001, size=prev_pred.shape)
+                                        prev_pred = prev_pred + noise
+                                
+                                prev_pred = model.predict(pred_input).flatten()
+                                
+                                # Limit extreme predictions
+                                prev_pred = np.clip(prev_pred, -0.1, 0.1)  # Limit to reasonable daily returns
+                                
+                                all_predictions.append(prev_pred)
+                        except Exception as e:
+                            st.warning(f"Error in prediction for period {period+1}: {str(e)}")
+                            # If we encounter an error, use the last successful prediction or zeros
+                            if all_predictions:
+                                all_predictions.append(all_predictions[-1])  # Use last prediction
+                            else:
+                                all_predictions.append(np.zeros(len(returns.columns)))  # Use zeros
+                    
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # Check if we have any predictions
+                    if not all_predictions:
+                        raise ValueError("Failed to generate predictions for any period")
+                    
+                    # Create a DataFrame for plotting
+                    prediction_df = pd.DataFrame(all_predictions, columns=returns.columns)
+                    
+                    # Calculate cumulative returns for better visualization
+                    cumulative_option = st.checkbox("Show cumulative returns", value=False)
+                    
+                    if cumulative_option:
+                        for col in prediction_df.columns:
+                            prediction_df[col] = (1 + prediction_df[col]).cumprod() - 1
+                        y_axis_title = "Cumulative Predicted Return"
+                    else:
+                        y_axis_title = "Predicted Return per Period"
+                    
+                    # Plot line graph for predictions
+                    fig_line = go.Figure()
+                    
+                    for asset in returns.columns:
+                        fig_line.add_trace(go.Scatter(
+                            y=prediction_df[asset],
+                            x=list(range(1, len(prediction_df) + 1)),
+                            mode='lines+markers',
+                            name=asset
+                        ))
+                    
+                    fig_line.update_layout(
+                        title=f"Predicted Returns Over Next {len(prediction_df)} Periods",
+                        xaxis_title="Future Period",
+                        yaxis_title=y_axis_title,
+                        yaxis=dict(tickformat='.2%'),
+                        template="plotly_white",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        height=500
+                    )
+                    
+                    # Add zero reference line
+                    fig_line.add_hline(
+                        y=0, 
+                        line_dash="dash", 
+                        line_color="gray",
+                        annotation_text="Zero Return",
+                        annotation_position="bottom right"
+                    )
+                    
+                    st.plotly_chart(fig_line, use_container_width=True)
+                    
+                    # Add download button for prediction data
+                    csv = prediction_df.to_csv(index=False)
+                    st.download_button(
+                        label="Download Prediction Data as CSV",
+                        data=csv,
+                        file_name="stock_return_predictions.csv",
+                        mime="text/csv",
+                    )
+                    
+                    # Add note about the nature of predictions
+                    st.info("""
+                    **Note:** Multi-period forecasts become less reliable as the forecast horizon extends. 
+                    The predictions shown here should be used as general directional guidance rather than precise forecasts.
+                    """)
+                    
+                except Exception as e:
+                    st.error(f"Error generating multi-period predictions: {str(e)}")
+                    st.info("Displaying single-period prediction only.")
+
+                # Plot bar chart for single-period prediction
+                fig_bar = go.Figure()
+                fig_bar.add_trace(go.Bar(x=predicted_df["Asset"], y=predicted_df["Predicted Return"], name="Predicted Returns"))
+                fig_bar.update_layout(
                     title="Predicted Returns for Next Period",
                     xaxis_title="Asset",
                     yaxis_title="Predicted Return",
                     template="plotly_white"
                 )
-                st.plotly_chart(fig)
+                st.plotly_chart(fig_bar)
+
                 st.markdown("#### Predicted Return Interpretation:")
                 st.write(
                 """
@@ -484,12 +769,12 @@ def main():
                 - **How to use predicted returns**: Investors can use the predicted returns to inform their portfolio decisions. If a certain asset is predicted to have a high positive return, an investor might choose to allocate more capital to it, betting on future gains. Conversely, if the predicted return is negative or lower than other assets, the investor might choose to reduce their exposure to that asset or avoid it entirely.
                     - For example, if Asset A is predicted to have a high positive return and Asset B has a negative predicted return, an investor might decide to increase the weight of Asset A in their portfolio and reduce or eliminate their holdings in Asset B.
                     
-                - **Forecast horizon and volatility**: It’s crucial to consider the **forecast horizon** (the time frame for which the returns are predicted) alongside the predicted returns. For instance, a short-term prediction may show large returns, but those returns could be very volatile, while a long-term prediction might show more stable but moderate returns.
+                - **Forecast horizon and volatility**: It's crucial to consider the **forecast horizon** (the time frame for which the returns are predicted) alongside the predicted returns. For instance, a short-term prediction may show large returns, but those returns could be very volatile, while a long-term prediction might show more stable but moderate returns.
                 
                 - **Volatility and risk**: Predicted returns should not be viewed in isolation. Volatility predictions (which indicate the risk or price fluctuations of the asset) should also be taken into account. An asset with a high predicted return but also high forecasted volatility might carry substantial risk, while an asset with a moderate predicted return and low volatility might offer more predictable and safer returns.
                     - For example, an investor might be willing to take on high volatility if they believe the predicted return justifies the potential risk, while others may prefer more stable returns with lower risk, even if the returns are not as high.
                     
-                - **Strategic investment decisions**: By combining predicted returns with other information like volatility and the investor's risk tolerance, the model’s return forecasts can serve as a valuable tool for portfolio management. The goal is to balance risk and reward, allocating capital to assets that align with the investor’s objectives.
+                - **Strategic investment decisions**: By combining predicted returns with other information like volatility and the investor's risk tolerance, the model's return forecasts can serve as a valuable tool for portfolio management. The goal is to balance risk and reward, allocating capital to assets that align with the investor's objectives.
                 """
                 )
             except Exception as e:

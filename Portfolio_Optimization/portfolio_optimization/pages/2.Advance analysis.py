@@ -1,7 +1,12 @@
 # TODO: UNCOMMENT THE FULL CODE TO RUN
 
-
 import streamlit as st 
+import sys
+import os
+import numpy as np
+
+# Add the parent directory to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from adavanced_risk_analysis import *
 
 # Main app
@@ -111,34 +116,113 @@ def main():
         if prediction_type == "Volatility Forecasting":
             # Volatility Forecasting
             st.markdown("### Volatility Forecasting")
-            model_type = st.radio("Select Volatility Model:", options=["ARCH", "GARCH"], index=1)
+            forecast_horizon = st.slider("Forecast Horizon (Days):", 5, 30, 10)
+            
+            # Initialize containers for results
             forecast_results = {}
+            failed_assets = []
 
-            for asset in tickers:
+            with st.spinner('Calculating volatility forecasts using GARCH model...'):
+                for asset in tickers:
+                    try:
+                        forecast, metrics = forecast_volatility(data, asset, forecast_horizon=forecast_horizon, model_type="GARCH")
+                        
+                        # Ensure we have valid forecast values
+                        if len(forecast) > 0:
+                            forecast_results[asset] = {
+                                'Forecasted_Volatility': forecast[0],  # First forecast point
+                                'MSE': metrics['MSE'],
+                                'RMSE': metrics['RMSE'],
+                                'MAE': metrics['MAE'],
+                                'Directional_Accuracy': metrics['Directional_Accuracy']
+                            }
+                        else:
+                            failed_assets.append((asset, "No valid forecast generated"))
+                    except Exception as e:
+                        failed_assets.append((asset, str(e)))
+                        continue
+
+            if forecast_results:
+                # Display forecasted volatility
+                st.subheader("Forecasted Volatility")
                 try:
-                    forecast = forecast_volatility(data, asset, forecast_horizon=10, model_type=model_type)
-                    forecast_results[asset] = forecast
+                    volatility_df = pd.DataFrame({
+                        'Asset': list(forecast_results.keys()),
+                        'Forecasted Volatility (%)': [results['Forecasted_Volatility'] for results in forecast_results.values()]
+                    }).set_index('Asset')
+                    
+                    # Format and display the dataframe
+                    st.dataframe(volatility_df.style.format({'Forecasted Volatility (%)': '{:.2f}'}))
+
+                    # Display evaluation metrics
+                    st.subheader("GARCH Model Evaluation Metrics")
+                    metrics_df = pd.DataFrame({
+                        'Asset': list(forecast_results.keys()),
+                        'MSE': [results['MSE'] for results in forecast_results.values()],
+                        'RMSE': [results['RMSE'] for results in forecast_results.values()],
+                        'MAE': [results['MAE'] for results in forecast_results.values()],
+                        'Directional Accuracy (%)': [results['Directional_Accuracy'] * 100 for results in forecast_results.values()]
+                    }).set_index('Asset')
+                    
+                    st.dataframe(metrics_df.style.format({
+                        'MSE': '{:.6f}',
+                        'RMSE': '{:.6f}',
+                        'MAE': '{:.6f}',
+                        'Directional Accuracy (%)': '{:.2f}'
+                    }))
+
+                    # Create a bar chart for volatility comparison
+                    if len(volatility_df) > 0:
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=volatility_df.index,
+                            y=volatility_df['Forecasted Volatility (%)'],
+                            name='Forecasted Volatility',
+                            marker_color='lightblue'
+                        ))
+                        fig.update_layout(
+                            title="GARCH Model: Forecasted Volatility Comparison",
+                            xaxis_title="Assets",
+                            yaxis_title="Forecasted Volatility (%)",
+                            template="plotly_white"
+                        )
+                        st.plotly_chart(fig)
                 except Exception as e:
-                    st.warning(f"Failed to forecast for {asset}: {e}")
+                    st.error(f"Error displaying results: {str(e)}")
 
-            st.dataframe(pd.DataFrame(forecast_results).T.rename(columns={0: "Forecasted Volatility"}))
+            # Display any failures
+            if failed_assets:
+                st.warning("Some assets could not be processed:")
+                for asset, error in failed_assets:
+                    st.error(f"{asset}: {error}")
+            
+            if not forecast_results and not failed_assets:
+                st.warning("No forecasts could be generated. Please check your data and parameters.")
 
-            # Interpretation of Volatility Forecast:
-            st.markdown("#### Volatility Forecast Interpretation:")
+            st.markdown("""
+            #### Interpretation of GARCH Model Metrics:
+            - **MSE (Mean Squared Error)**: Measures the average squared difference between predicted and actual volatility. Lower values indicate better predictions.
+            - **RMSE (Root Mean Squared Error)**: Square root of MSE, provides error metric in the same unit as volatility. Lower values are better.
+            - **MAE (Mean Absolute Error)**: Average absolute difference between predicted and actual volatility. Less sensitive to outliers than MSE.
+            - **Directional Accuracy**: Percentage of times the model correctly predicts whether volatility will increase or decrease. Higher values indicate better directional prediction.
+            """)
+
+            # Interpretation of Volatility Forecast
+            st.markdown("#### GARCH Model Volatility Forecast Interpretation:")
             st.write(
                 """
                 - **Volatility** is a statistical measure that describes the extent to which the price of an asset fluctuates over time. In simple terms, it represents the level of uncertainty or risk associated with the asset's price movement. 
-                - High **volatility** implies that the asset’s price is likely to experience large fluctuations in a short period, which can result in significant gains or losses. Conversely, low volatility means the asset's price changes are smaller and more predictable, typically implying a lower level of risk.
+                - High **volatility** implies that the asset's price is likely to experience large fluctuations in a short period, which can result in significant gains or losses. Conversely, low volatility means the asset's price changes are smaller and more predictable, typically implying a lower level of risk.
                 
-                - **Forecasted volatility** is the estimated measure of an asset's future price fluctuations, typically derived from past price data. It provides an outlook on how much the asset’s price could vary over the forecast period, which is particularly useful for risk management and investment strategy. 
-                - Forecasting volatility is crucial because it helps investors anticipate the likelihood of significant price swings and assess whether the asset’s risk profile aligns with their investment objectives.
+                - **Forecasted volatility** is the estimated measure of an asset's future price fluctuations, typically derived from past price data. It provides an outlook on how much the asset's price could vary over the forecast period, which is particularly useful for risk management and investment strategy. 
+                - Forecasting volatility is crucial because it helps investors anticipate the likelihood of significant price swings and assess whether the asset's risk profile aligns with their investment objectives.
 
                 - **Interpretation of high forecasted volatility:**
                     - If the forecasted volatility is high, it indicates that there is a higher likelihood of large price movements in the forecast horizon (e.g., 10 days). This suggests that the asset may experience significant price changes, either upwards or downwards.
                     - High volatility can represent both risk and opportunity: it could lead to substantial returns, but it also increases the potential for substantial losses. Investors seeking greater profits may find high volatility attractive, but those with a lower risk tolerance may want to avoid such assets or hedge their positions.
 
                 - **Interpretation of low forecasted volatility:**
-                    - On the other hand, if forecasted volatility is low, it signals that the asset’s price is expected to remain relatively stable over the forecast horizon.
+                    - On the other hand, if forecasted volatility is low, it signals that the asset's price is expected to remain relatively stable over the forecast horizon.
                     - Low volatility is typically more attractive to risk-averse investors who prefer to invest in assets with less price fluctuation. Such assets can offer more predictable returns, making them ideal for conservative or long-term investors who prioritize stability over high returns.
                     
                 - Understanding forecasted volatility helps in shaping investment decisions. For instance, an investor might choose high-volatility assets for short-term speculative strategies, whereas low-volatility assets might be favored for long-term portfolio stability.
@@ -146,76 +230,119 @@ def main():
             )
 
         elif prediction_type == "Return Prediction":
-            # Return Prediction
-            st.markdown("### Return Prediction")
-
-            # Options to choose between different models for return prediction
-            return_model_type = st.radio("Select Return Prediction Model:", options=["Linear Regression", "Random Forest"], index=0)
+            # Return Prediction using LSTM
+            st.markdown("### LSTM Return Prediction")
 
             # Forecast horizon and lookback options for prediction
             forecast_horizon = st.slider("Forecast Horizon (Days):", 1, 30, 1)
             lookback = st.slider("Lookback Period (Days):", 1, 30, 5)
 
             try:
-                if return_model_type == "Linear Regression":
-                    model, mse = train_return_predictor_linear(returns, lookback=lookback, forecast_horizon=forecast_horizon)
-                elif return_model_type == "Random Forest":
-                    model, mse = train_return_predictor(returns, lookback=lookback, forecast_horizon=forecast_horizon)
+                # Prepare latest data for prediction
+                if len(returns) < lookback:
+                    st.error(f"Insufficient data: need at least {lookback} days of returns.")
+                    return
 
-                st.write(f"Model trained with Mean Squared Error (MSE): {mse:.4f}")
+                latest_data = returns.iloc[-lookback:].values
+                latest_data = latest_data.reshape(1, lookback, returns.shape[1])
 
-                # Predict returns for the next period
-                latest_data = returns.iloc[-lookback:].values.flatten().reshape(1, -1)
+                # Train LSTM model
+                model, mse = train_return_predictor_lstm(returns, lookback=lookback, forecast_horizon=forecast_horizon)
+                
+                # Display evaluation metrics
+                st.write("### LSTM Model Evaluation Metrics")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Mean Squared Error (MSE)", f"{mse:.6f}")
+                
+                with col2:
+                    rmse = np.sqrt(mse)
+                    st.metric("Root Mean Squared Error (RMSE)", f"{rmse:.6f}")
+                
+                with col3:
+                    # Calculate MAE using the latest prediction
+                    predicted = model.predict(latest_data).flatten()
+                    actual = returns.iloc[-1].values
+                    mae = np.mean(np.abs(predicted - actual))
+                    st.metric("Mean Absolute Error (MAE)", f"{mae:.6f}")
+                
+                st.write("#### Interpretation of LSTM Metrics:")
+                st.markdown("""
+                - **MSE**: Measures the average squared difference between predicted and actual returns. Lower values indicate better predictions.
+                - **RMSE**: Square root of MSE, provides error metric in the same unit as the returns. Lower values are better.
+                - **MAE**: Average absolute difference between predicted and actual returns. Less sensitive to outliers than MSE.
+                """)
+
+                # Make predictions for the next period
                 predicted_returns = model.predict(latest_data).flatten()
+                
                 # Convert the predicted returns to percentages
                 predicted_returns_percent = predicted_returns * 100
 
                 # Format the predicted returns as strings with '%' symbol
                 predicted_returns_percent_str = [f"{value:.2f}%" for value in predicted_returns_percent]
 
-
                 # Display predictions
-                st.write("### Predicted Returns for Each Asset")
-                predicted_df = pd.DataFrame(
-                    {"Asset": returns.columns, "Predicted Return": predicted_returns_percent_str}
-                )
+                st.write("### LSTM Predicted Returns for Each Asset")
+                predicted_df = pd.DataFrame({
+                    "Asset": returns.columns,
+                    "Predicted Return": predicted_returns_percent_str
+                })
                 st.dataframe(predicted_df)
 
                 # Plot predictions
                 fig = go.Figure()
-                fig.add_trace(go.Bar(x=predicted_df["Asset"], y=predicted_df["Predicted Return"], name="Predicted Returns"))
+                fig.add_trace(go.Bar(
+                    x=predicted_df["Asset"],
+                    y=predicted_returns_percent,
+                    name="Predicted Returns",
+                    marker_color=['red' if x < 0 else 'green' for x in predicted_returns_percent]
+                ))
                 fig.update_layout(
-                    title="Predicted Returns for Next Period",
+                    title="LSTM Model: Predicted Returns for Next Period",
                     xaxis_title="Asset",
-                    yaxis_title="Predicted Return",
-                    template="plotly_white"
+                    yaxis_title="Predicted Return (%)",
+                    template="plotly_white",
+                    showlegend=True
                 )
                 st.plotly_chart(fig)
-                st.markdown("#### Predicted Return Interpretation:")
+
+                # Add confidence intervals to the predictions
+                st.subheader("LSTM Prediction Confidence")
+                confidence_df = pd.DataFrame({
+                    "Asset": returns.columns,
+                    "Predicted Return (%)": [f"{x:.2f}%" for x in predicted_returns_percent],
+                    "Confidence Level": ["High" if abs(x) > 2*rmse else "Medium" if abs(x) > rmse else "Low" for x in predicted_returns_percent]
+                })
+                st.dataframe(confidence_df)
+
+                st.markdown("#### LSTM Model Return Prediction Interpretation:")
                 st.write(
-                """
-                - **Predicted returns** refer to the model's best estimate of how each asset is expected to perform during the forecast period (e.g., the next period, which could be one day, a week, or a month). These predictions are generated using historical return data and statistical or machine learning models, and they provide a glimpse into the potential future performance of each asset.
+                f"""
+                The LSTM (Long Short-Term Memory) model has generated predictions for each asset's returns. Here's how to interpret the results:
                 
-                - **Positive predicted returns** suggest that the asset is expected to increase in value during the forecast horizon. For example, if the model predicts a positive return for a stock, it indicates that the stock's price is expected to go up. Positive predicted returns are generally viewed as favorable for investors looking for capital appreciation or gains.
+                - **Predicted returns** show the model's estimate of how each asset may perform in the next {forecast_horizon} day(s), based on the past {lookback} days of data.
                 
-                - **Negative predicted returns**, on the other hand, suggest that the asset is expected to decline in value over the forecast period. This indicates potential losses and could signal that the asset might be less attractive for investment in the near term. Investors might consider reducing their exposure to such assets or looking for hedging opportunities.
+                - **Positive predicted returns** (shown in green) suggest potential price increases.
+                - **Negative predicted returns** (shown in red) suggest potential price decreases.
                 
-                - **Magnitude of predicted returns**: The size of the predicted return gives investors an idea of how strongly the model expects the asset to move. A larger positive or negative predicted return implies a larger expected change in the asset's price, while a smaller return indicates a more stable, less volatile price movement.
-                    - For example, a predicted return of +10% indicates a substantial upward movement, while +1% indicates only a modest increase. Similarly, -10% signals a substantial decrease, while -1% indicates a small decline.
-                    
-                - **How to use predicted returns**: Investors can use the predicted returns to inform their portfolio decisions. If a certain asset is predicted to have a high positive return, an investor might choose to allocate more capital to it, betting on future gains. Conversely, if the predicted return is negative or lower than other assets, the investor might choose to reduce their exposure to that asset or avoid it entirely.
-                    - For example, if Asset A is predicted to have a high positive return and Asset B has a negative predicted return, an investor might decide to increase the weight of Asset A in their portfolio and reduce or eliminate their holdings in Asset B.
-                    
-                - **Forecast horizon and volatility**: It’s crucial to consider the **forecast horizon** (the time frame for which the returns are predicted) alongside the predicted returns. For instance, a short-term prediction may show large returns, but those returns could be very volatile, while a long-term prediction might show more stable but moderate returns.
+                - **Confidence Levels**:
+                    - High: The predicted return is more than twice the model's typical error (RMSE)
+                    - Medium: The predicted return is between one and two times the model's typical error
+                    - Low: The predicted return is less than the model's typical error
                 
-                - **Volatility and risk**: Predicted returns should not be viewed in isolation. Volatility predictions (which indicate the risk or price fluctuations of the asset) should also be taken into account. An asset with a high predicted return but also high forecasted volatility might carry substantial risk, while an asset with a moderate predicted return and low volatility might offer more predictable and safer returns.
-                    - For example, an investor might be willing to take on high volatility if they believe the predicted return justifies the potential risk, while others may prefer more stable returns with lower risk, even if the returns are not as high.
-                    
-                - **Strategic investment decisions**: By combining predicted returns with other information like volatility and the investor's risk tolerance, the model’s return forecasts can serve as a valuable tool for portfolio management. The goal is to balance risk and reward, allocating capital to assets that align with the investor’s objectives.
+                - **Model Performance**:
+                    - MSE: {mse:.6f}
+                    - RMSE: {rmse:.6f}
+                    - MAE: {mae:.6f}
+                
+                **Note**: These predictions are based on historical patterns and should be used as one of many tools in making investment decisions. Always consider other factors such as market conditions, company fundamentals, and your investment goals.
                 """
                 )
             except Exception as e:
-                st.error(f"An error occurred during return prediction: {e}")
+                st.error(f"An error occurred during LSTM return prediction: {str(e)}")
+                st.write("Please try adjusting the lookback period or forecast horizon.")
 
         
     with tab4:
