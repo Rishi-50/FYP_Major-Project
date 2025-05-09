@@ -5,11 +5,11 @@ import yfinance as yf
 from datetime import datetime, timedelta
 
 # Set page configuration
-st.set_page_config(page_title="Portfolio Optimization Suite", layout="wide")
+st.set_page_config(page_title="InsightFlow - A smart portfolio optimizizer for stocks", layout="wide")
 
 def main():
     # Header section
-    st.title("📊 Smart Portfolio Optimization Suite")
+    st.title("📊 InsightFlow - A smart portfolio optimizizer for stocks")
     
     # Welcome message
     st.markdown("""
@@ -44,12 +44,12 @@ def main():
     
     with col3:
         st.markdown("""
-        ### 🤖 AI-Powered Insights
+        ### 🚫 Feature Temporarily Disabled
         
-        Machine learning for better decisions:
-        - Pattern recognition
-        - Risk prediction
-        - Automated rebalancing
+        This feature is currently under maintenance:
+        - Check back later for updates
+        - Feature will be re-enabled soon
+        - Contact support for more information
         """)
     
     # Market Overview Section
