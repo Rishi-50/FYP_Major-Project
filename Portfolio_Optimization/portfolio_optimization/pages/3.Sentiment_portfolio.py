@@ -117,7 +117,7 @@ def load_sentiment_data():
         # Sort by date
         sentiment_df = sentiment_df.sort_values('date')
         
-        return sentiment_df
+        return sentiment_df 
     except Exception as e:
         st.error(f"Error processing sentiment data: {str(e)}")
         return None
@@ -974,79 +974,7 @@ def main():
                     # Create a combined plot for all stocks
                     st.markdown("### Combined LSTM Predictions for All Selected Stocks")
                     
-                    # Create combined prediction plot - ensuring it's a line graph
-                    fig = go.Figure()
-                    
-                    # Create color scale based on portfolio weights
-                    colorscale = px.colors.qualitative.Plotly
-                    
-                    # Prepare shared x-axis data points (indices) for consistent x-axis
-                    x_indices = list(range(max(len(lstm_results[ticker]['predictions']) for ticker in lstm_results if ticker in selected_tickers)))
-                    
-                    # Add each stock's predictions to the combined plot
-                    for i, ticker in enumerate(selected_tickers):
-                        if ticker in lstm_results:
-                            result = lstm_results[ticker]
-                            weight = optimal_weights[ticker]
-                            
-                            # Calculate line width based on portfolio weight (1-5 px)
-                            line_width = 1 + (weight / optimal_weights.max()) * 4
-                            
-                            # Set color from colorscale
-                            color = colorscale[i % len(colorscale)]
-                            
-                            # Create custom hover template
-                            hover_template = (
-                                f"<b>{ticker}</b><br>" +
-                                "Return: %{y:.2%}<br>" +
-                                f"Portfolio Weight: {weight:.2%}<br>" +
-                                f"Avg Prediction: {avg_predictions[ticker]:.2%}"
-                            )
-                            
-                            # Add predictions for this stock as a line
-                            pred_values = result['predictions']
-                            x_values = x_indices[:len(pred_values)]
-                            
-                            fig.add_trace(go.Scatter(
-                                x=x_values,
-                                y=pred_values,
-                                name=f'{ticker} ({weight:.1%})',
-                                mode='lines',
-                                line=dict(
-                                    width=line_width,
-                                    color=color
-                                ),
-                                hovertemplate=hover_template
-                            ))
-                    
-                    # Add a zero reference line
-                    fig.add_hline(
-                        y=0, 
-                        line_dash="dash", 
-                        line_color="gray", 
-                        annotation_text="Zero Return",
-                        annotation_position="bottom right"
-                    )
-                    
-                    fig.update_layout(
-                        title="Combined LSTM Return Predictions",
-                        xaxis_title="Time Steps",
-                        yaxis_title="Predicted Returns",
-                        template='plotly_white',
-                        height=500,
-                        legend=dict(
-                            yanchor="top",
-                            y=0.99,
-                            xanchor="left",
-                            x=0.01
-                        ),
-                        hovermode='x unified',
-                        yaxis=dict(tickformat='.2%')  # Format y-axis as percentage
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Add aggregate predictions analysis below the combined chart
+                    # Add aggregate predictions analysis
                     st.markdown("### 📊 Aggregate Predictions Analysis")
                     
                     prediction_df = pd.DataFrame({
@@ -1118,61 +1046,6 @@ def main():
                         )
                     
                     st.plotly_chart(fig_bar, use_container_width=True)
-                    
-                    # Add scatter plot of predicted returns vs portfolio weights
-                    st.markdown("### Predicted Returns vs Portfolio Weights")
-                    
-                    fig_scatter = go.Figure()
-                    
-                    # Create bubble chart
-                    bubble_sizes = [1/lstm_results[ticker]['rmse'] * 100 for ticker in avg_predictions.keys()]
-                    max_size = max(bubble_sizes) if bubble_sizes else 50
-                    normalized_sizes = [size/max_size * 50 + 10 for size in bubble_sizes]
-                    
-                    fig_scatter.add_trace(go.Scatter(
-                        x=list(avg_predictions.values()),
-                        y=[optimal_weights[ticker] for ticker in avg_predictions.keys()],
-                        mode='markers+text',
-                        marker=dict(
-                            size=normalized_sizes,
-                            color=list(avg_predictions.values()),
-                            colorscale='RdYlGn',
-                            colorbar=dict(title="Predicted Return"),
-                            showscale=True,
-                            sizemode='diameter',
-                            line=dict(width=1, color='black')
-                        ),
-                        text=list(avg_predictions.keys()),
-                        textposition="top center",
-                        hovertemplate=(
-                            "<b>%{text}</b><br>" +
-                            "Predicted Return: %{x:.2%}<br>" +
-                            "Portfolio Weight: %{y:.2%}<br>" +
-                            "Model Confidence: %{marker.size:.2f}"
-                        )
-                    ))
-                    
-                    # Add a vertical line at y=0 (zero return)
-                    fig_scatter.add_vline(
-                        x=0, 
-                        line_dash="dash", 
-                        line_color="gray",
-                        annotation_text="Zero Return", 
-                        annotation_position="top right"
-                    )
-                    
-                    fig_scatter.update_layout(
-                        title="Stock Predicted Returns vs Portfolio Weights",
-                        xaxis_title="Predicted Return",
-                        yaxis_title="Portfolio Weight",
-                        xaxis=dict(tickformat='.2%'),
-                        yaxis=dict(tickformat='.2%'),
-                        template='plotly_white',
-                        height=500,
-                        margin=dict(l=50, r=50, t=80, b=50)
-                    )
-                    
-                    st.plotly_chart(fig_scatter, use_container_width=True)
                     
                     # Prediction-based insights
                     weighted_pred_return = sum(avg_predictions[ticker] * optimal_weights[ticker] 
