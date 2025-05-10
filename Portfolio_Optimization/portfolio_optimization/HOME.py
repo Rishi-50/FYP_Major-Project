@@ -10,25 +10,21 @@ st.set_page_config(page_title="InsightFlow - A smart portfolio optimizizer for s
 
 def get_market_data():
     try:
-        # Use the correct Nifty 50 symbol with .NS suffix
-        nifty = yf.Ticker("^NSEI")
+        # Try multiple symbols for Nifty 50
+        symbols = ["NSEI.NS", "NIFTY.NS"]
+        nifty_data = None
         
-        # Add retry mechanism
-        max_retries = 3
-        for attempt in range(max_retries):
+        for symbol in symbols:
             try:
+                nifty = yf.Ticker(symbol)
                 # Fetch data with longer period to ensure we get some data
                 nifty_data = nifty.history(period="5d")
                 if not nifty_data.empty:
                     break
-                time.sleep(2)  # Wait before retry
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    st.error(f"Failed to fetch market data after {max_retries} attempts.")
-                    return None
-                time.sleep(2)  # Wait before retry
+            except Exception:
+                continue
         
-        if nifty_data.empty:
+        if nifty_data is None or nifty_data.empty:
             st.warning("No market data available. Using default values.")
             return {
                 'nifty_price': 22000,  # Default value
