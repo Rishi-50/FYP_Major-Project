@@ -76,7 +76,7 @@ NIFTY_50_STOCKS = {
 def load_sentiment_data():
     try:
         # Try relative path first
-        sentiment_df = pd.read_csv("../../../Sentiment_Analysis/finbert_sentiment_scores.csv")
+        sentiment_df = pd.read_csv("../../Sentiment_Analysis/finbert_sentiment_scores.csv")
     except FileNotFoundError:
         try:
             # If that fails, try absolute path
